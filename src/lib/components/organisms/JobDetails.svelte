@@ -22,16 +22,24 @@
   let isLoading = $state(true);
   let disputeReason = $state("");
   let showDisputeInput = $state(false);
+  let people = $state<{id: string; name: string}[]>([]);
 
   onMount(async () => {
     try {
-      details = await api.jobs.getDetails(jobId);
+      [details, people] = await Promise.all([
+        api.jobs.getDetails(jobId),
+        api.people.list(),
+      ]);
     } catch (e) {
       uiStore.notify(e as string, "error");
     } finally {
       isLoading = false;
     }
   });
+
+  function personName(id: string) {
+    return people.find(p => p.id === id)?.name ?? id;
+  }
 
   async function refresh() {
     details = await api.jobs.getDetails(jobId);
@@ -83,8 +91,8 @@
   };
 </script>
 
-<div class="fixed inset-0 bg-primary/20 backdrop-blur-sm z-[200] flex items-center justify-end">
-  <div class="bg-canvas w-full max-w-3xl h-full border-l border-hairline flex flex-col animate-in slide-in-from-right duration-300">
+<div style="position:fixed;top:0;left:0;right:0;bottom:0;width:100vw;height:100vh;z-index:200;background:rgba(23,23,28,0.2);display:flex;align-items:center;justify-content:flex-end;transform:translateZ(0);-webkit-transform:translateZ(0);-webkit-backface-visibility:hidden;contain:none">
+  <div style="background:#fff;width:100%;min-width:0;max-width:48rem;height:100%;border-left:1px solid #d9d9dd;display:flex;flex-direction:column;transform:translateZ(0);-webkit-transform:translateZ(0)">
     <!-- Header -->
     <header class="p-8 border-b border-hairline flex items-center justify-between bg-soft-stone/10">
       <div class="flex items-center gap-4">
@@ -114,7 +122,7 @@
               </div>
               <div class="flex flex-col">
                 <span class="text-[10px] font-mono uppercase tracking-widest text-muted">Assignee</span>
-                <span class="text-sm font-medium">{details.job.assigned_person_id}</span>
+                <span class="text-sm font-medium">{personName(details.job.assigned_person_id)}</span>
               </div>
             </div>
             <div class="flex items-center gap-3">

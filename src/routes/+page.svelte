@@ -12,6 +12,15 @@
   import { Bell } from "phosphor-svelte";
 
   let wizardOpen = $state(false);
+  let notifOpen = $state(false);
+
+  // Sync openNewJobWizard flag from Cmd+N shortcut
+  $effect(() => {
+    if (uiStore.openNewJobWizard) {
+      wizardOpen = true;
+      uiStore.openNewJobWizard = false;
+    }
+  });
 
   onMount(() => {
     jobsStore.fetchJobs();
@@ -50,12 +59,39 @@
       </div>
 
       <div class="flex items-center gap-6">
-        <button class="text-muted hover:text-ink transition-colors relative">
-          <Bell size={20} />
-          {#if uiStore.notifications.length > 0}
-            <span class="absolute -top-1 -right-1 w-2 h-2 bg-coral rounded-full"></span>
+        <div class="relative">
+          <button
+            onclick={() => notifOpen = !notifOpen}
+            class="text-muted hover:text-ink transition-colors relative"
+          >
+            <Bell size={20} />
+            {#if uiStore.notifications.length > 0}
+              <span class="absolute -top-1 -right-1 w-2 h-2 bg-coral rounded-full"></span>
+            {/if}
+          </button>
+          {#if notifOpen}
+            <div class="absolute right-0 top-8 w-80 bg-canvas border border-hairline rounded-lg shadow-lg z-[300] overflow-hidden">
+              <div class="px-4 py-3 border-b border-hairline flex items-center justify-between">
+                <span class="text-xs font-mono uppercase tracking-widest text-muted">Notifications</span>
+                {#if uiStore.notifications.length > 0}
+                  <button onclick={() => uiStore.notifications = []} class="text-[11px] text-muted hover:text-ink">Clear all</button>
+                {/if}
+              </div>
+              {#if uiStore.notifications.length === 0}
+                <p class="text-sm text-muted text-center py-8">No notifications</p>
+              {:else}
+                <div class="max-h-64 overflow-y-auto divide-y divide-hairline">
+                  {#each uiStore.notifications as n (n.id)}
+                    <div class="px-4 py-3 flex items-start gap-3">
+                      <span class="w-2 h-2 rounded-full mt-1.5 shrink-0 {n.type === 'error' ? 'bg-error' : n.type === 'success' ? 'bg-deep-green' : 'bg-action-blue'}"></span>
+                      <p class="text-sm text-ink">{n.message}</p>
+                    </div>
+                  {/each}
+                </div>
+              {/if}
+            </div>
           {/if}
-        </button>
+        </div>
         <div class="flex items-center gap-3 border-l border-hairline pl-6">
           <div class="w-8 h-8 rounded-full bg-soft-stone flex items-center justify-center text-[10px] font-bold text-slate">
             GA
@@ -72,7 +108,7 @@
       {:else if uiStore.activeTab === 'org'}
         <OrgView />
       {:else if uiStore.activeTab === 'jobs'}
-        <JobBoardView />
+        <JobBoardView bind:wizardOpen />
       {:else if uiStore.activeTab === 'reports'}
         <ReportsView />
       {:else if uiStore.activeTab === 'settings'}
@@ -87,9 +123,9 @@
 
     <!-- Notifications Overlay -->
     {#if uiStore.notifications.length > 0}
-      <div class="fixed bottom-8 right-8 z-[100] flex flex-col gap-3">
+      <div style="position:fixed;bottom:2rem;right:2rem;z-index:100;display:flex;flex-direction:column;gap:0.75rem;transform:translateZ(0);-webkit-transform:translateZ(0)">
         {#each uiStore.notifications as n (n.id)}
-          <div class="bg-primary text-on-primary px-6 py-4 rounded-sm flex items-center gap-3 animate-in slide-in-from-right">
+          <div style="background:#17171c;color:#fff;padding:1rem 1.5rem;border-radius:0.25rem;display:flex;align-items:center;gap:0.75rem;transform:translateZ(0);-webkit-transform:translateZ(0)">
             <span class="text-sm font-medium">{n.message}</span>
           </div>
         {/each}

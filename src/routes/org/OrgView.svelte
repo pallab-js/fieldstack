@@ -270,8 +270,8 @@
 
 <!-- Create/Edit Modal -->
 {#if modal}
-  <div class="fixed inset-0 bg-primary/20 backdrop-blur-sm z-[200] flex items-center justify-center p-6">
-    <div class="bg-canvas w-full max-w-md rounded-lg border border-hairline overflow-hidden">
+  <div style="position:fixed;top:0;left:0;right:0;bottom:0;width:100vw;height:100vh;z-index:200;background:rgba(23,23,28,0.8);display:flex;align-items:center;justify-content:center;transform:translateZ(0);-webkit-transform:translateZ(0);-webkit-backface-visibility:hidden;contain:none">
+    <div style="background:#fff;width:100%;min-width:0;max-width:28rem;border-radius:0.5rem;border:1px solid #d9d9dd;overflow:hidden;max-height:90vh;display:flex;flex-direction:column;transform:translateZ(0);-webkit-transform:translateZ(0)">
       <header class="p-6 border-b border-hairline flex items-center justify-between bg-soft-stone/30">
         <h2 class="font-display text-lg">
           {modal.mode === "create" ? "Add" : "Edit"}
@@ -365,8 +365,8 @@
 
 <!-- Delete Confirm Modal -->
 {#if deleteConfirm}
-  <div class="fixed inset-0 bg-primary/20 backdrop-blur-sm z-[200] flex items-center justify-center p-6">
-    <div class="bg-canvas w-full max-w-sm rounded-lg border border-hairline overflow-hidden">
+  <div style="position:fixed;top:0;left:0;right:0;bottom:0;width:100vw;height:100vh;z-index:200;background:rgba(23,23,28,0.8);display:flex;align-items:center;justify-content:center;transform:translateZ(0);-webkit-transform:translateZ(0);-webkit-backface-visibility:hidden;contain:none">
+    <div style="background:#fff;width:100%;min-width:0;max-width:24rem;border-radius:0.5rem;border:1px solid #d9d9dd;overflow:hidden;max-height:90vh;display:flex;flex-direction:column;transform:translateZ(0);-webkit-transform:translateZ(0)">
       <div class="p-6 space-y-3">
         <h2 class="font-display text-lg">Delete {deleteConfirm.type === "company" ? "Company" : "Person"}?</h2>
         <p class="text-slate text-sm">

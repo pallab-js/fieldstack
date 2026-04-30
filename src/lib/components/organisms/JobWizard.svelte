@@ -86,8 +86,8 @@
   ];
 </script>
 
-<div class="fixed inset-0 bg-primary/20 backdrop-blur-sm z-[200] flex items-center justify-center p-6">
-  <div class="bg-canvas w-full max-w-2xl rounded-lg border border-hairline overflow-hidden flex flex-col max-h-[90vh]">
+<div style="position:fixed;top:0;left:0;right:0;bottom:0;width:100vw;height:100vh;z-index:200;background:rgba(23,23,28,0.2);display:flex;align-items:center;justify-content:center;padding:1.5rem;transform:translateZ(0);-webkit-transform:translateZ(0);-webkit-backface-visibility:hidden;contain:none">
+  <div style="background:#fff;width:100%;min-width:0;max-width:42rem;border-radius:0.5rem;border:1px solid #d9d9dd;overflow:hidden;max-height:90vh;display:flex;flex-direction:column;transform:translateZ(0);-webkit-transform:translateZ(0)">
     <!-- Header -->
     <header class="p-6 border-b border-hairline flex items-center justify-between bg-soft-stone/30">
       <div>
