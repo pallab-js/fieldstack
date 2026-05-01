@@ -22,12 +22,20 @@ pub struct Person {
     pub initials: String,
 }
 
+fn db_err(msg: &str) -> impl Fn(sqlx::Error) -> String {
+    let msg = msg.to_string();
+    move |e| {
+        eprintln!("DB error in {}: {}", msg, e);
+        format!("Failed to {}", msg)
+    }
+}
+
 #[tauri::command]
 pub async fn get_companies(pool: State<'_, SqlitePool>) -> Result<Vec<Company>, String> {
     sqlx::query_as::<_, Company>("SELECT id, name, logo_url, created_at FROM companies ORDER BY name")
         .fetch_all(&*pool)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(db_err("fetch companies"))
 }
 
 #[tauri::command]
@@ -35,20 +43,14 @@ pub async fn get_people(pool: State<'_, SqlitePool>) -> Result<Vec<Person>, Stri
     sqlx::query_as::<_, Person>("SELECT id, name, email, phone, avatar_color, initials FROM people ORDER BY name")
         .fetch_all(&*pool)
         .await
-        .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub async fn seed_data(pool: State<'_, SqlitePool>) -> Result<(), String> {
-    seed_data_inner(&pool).await
+        .map_err(db_err("fetch people"))
 }
 
 pub async fn seed_data_inner(pool: &SqlitePool) -> Result<(), String> {
-    // Check if already seeded
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM companies")
         .fetch_one(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(db_err("check seed status"))?;
 
     if count > 0 {
         return Ok(());
@@ -56,7 +58,6 @@ pub async fn seed_data_inner(pool: &SqlitePool) -> Result<(), String> {
 
     let now = Utc::now().to_rfc3339();
 
-    // Seed companies
     let c1 = Uuid::new_v4().to_string();
     let c2 = Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO companies (id, name, created_at) VALUES (?, ?, ?), (?, ?, ?)")
@@ -64,9 +65,8 @@ pub async fn seed_data_inner(pool: &SqlitePool) -> Result<(), String> {
         .bind(&c2).bind("Fieldstack Construction").bind(&now)
         .execute(pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(db_err("seed companies"))?;
 
-    // Seed people
     let p1 = Uuid::new_v4().to_string();
     let p2 = Uuid::new_v4().to_string();
     let p3 = Uuid::new_v4().to_string();
@@ -81,9 +81,8 @@ pub async fn seed_data_inner(pool: &SqlitePool) -> Result<(), String> {
     .bind(&p3).bind(&now)
     .execute(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(db_err("seed people"))?;
 
-    // Link people to companies
     sqlx::query(
         "INSERT INTO person_companies (person_id, company_id) VALUES \
          (?, ?), (?, ?), (?, ?), (?, ?)"
@@ -94,7 +93,7 @@ pub async fn seed_data_inner(pool: &SqlitePool) -> Result<(), String> {
     .bind(&p3).bind(&c2)
     .execute(pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(db_err("seed person-company links"))?;
 
     Ok(())
 }
@@ -107,11 +106,19 @@ pub async fn create_company(
 ) -> Result<String, String> {
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
-    
+
+    // Validate logo_url to prevent javascript: or data: URI schemes
+    if let Some(ref url) = logo_url {
+        let lower = url.to_lowercase();
+        if lower.starts_with("javascript:") || lower.starts_with("data:") || lower.starts_with("vbscript:") {
+            return Err("Invalid logo_url: unsafe URI scheme".to_string());
+        }
+    }
+
     sqlx::query("INSERT INTO companies (id, name, logo_url, created_at) VALUES (?, ?, ?, ?)")
         .bind(&id).bind(&name).bind(&logo_url).bind(&now)
-        .execute(&*pool).await.map_err(|e| e.to_string())?;
-    
+        .execute(&*pool).await.map_err(db_err("create company"))?;
+
     Ok(id)
 }
 
@@ -122,10 +129,18 @@ pub async fn update_company(
     name: String,
     logo_url: Option<String>,
 ) -> Result<(), String> {
+    // Validate logo_url to prevent javascript: or data: URI schemes
+    if let Some(ref url) = logo_url {
+        let lower = url.to_lowercase();
+        if lower.starts_with("javascript:") || lower.starts_with("data:") || lower.starts_with("vbscript:") {
+            return Err("Invalid logo_url: unsafe URI scheme".to_string());
+        }
+    }
+
     sqlx::query("UPDATE companies SET name = ?, logo_url = ? WHERE id = ?")
         .bind(&name).bind(&logo_url).bind(&id)
-        .execute(&*pool).await.map_err(|e| e.to_string())?;
-    
+        .execute(&*pool).await.map_err(db_err("update company"))?;
+
     Ok(())
 }
 
@@ -133,8 +148,8 @@ pub async fn update_company(
 pub async fn delete_company(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
     sqlx::query("DELETE FROM companies WHERE id = ?")
         .bind(&id)
-        .execute(&*pool).await.map_err(|e| e.to_string())?;
-    
+        .execute(&*pool).await.map_err(db_err("delete company"))?;
+
     Ok(())
 }
 
@@ -148,29 +163,26 @@ pub async fn create_person(
 ) -> Result<String, String> {
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
-    
-    // Generate initials
+
     let initials: String = name.split_whitespace()
         .filter_map(|w| w.chars().next())
         .take(2)
         .collect::<String>()
         .to_uppercase();
-    
-    // Random avatar color
+
     let colors = ["#5e6ad2", "#27a644", "#f59e0b", "#ef4444", "#8b5cf6"];
     let avatar_color = colors[id.len() % colors.len()];
-    
+
     sqlx::query("INSERT INTO people (id, name, email, phone, initials, avatar_color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .bind(&id).bind(&name).bind(&email).bind(&phone).bind(&initials).bind(avatar_color).bind(&now)
-        .execute(&*pool).await.map_err(|e| e.to_string())?;
-    
-    // Link to companies
+        .execute(&*pool).await.map_err(db_err("create person"))?;
+
     for company_id in company_ids {
         sqlx::query("INSERT INTO person_companies (person_id, company_id) VALUES (?, ?)")
             .bind(&id).bind(&company_id)
-            .execute(&*pool).await.map_err(|e| e.to_string())?;
+            .execute(&*pool).await.map_err(db_err("link person to company"))?;
     }
-    
+
     Ok(id)
 }
 
@@ -188,22 +200,21 @@ pub async fn update_person(
         .take(2)
         .collect::<String>()
         .to_uppercase();
-    
+
     sqlx::query("UPDATE people SET name = ?, email = ?, phone = ?, initials = ? WHERE id = ?")
         .bind(&name).bind(&email).bind(&phone).bind(&initials).bind(&id)
-        .execute(&*pool).await.map_err(|e| e.to_string())?;
-    
-    // Update company links
+        .execute(&*pool).await.map_err(db_err("update person"))?;
+
     sqlx::query("DELETE FROM person_companies WHERE person_id = ?")
         .bind(&id)
-        .execute(&*pool).await.map_err(|e| e.to_string())?;
-    
+        .execute(&*pool).await.map_err(db_err("clear person-company links"))?;
+
     for company_id in company_ids {
         sqlx::query("INSERT INTO person_companies (person_id, company_id) VALUES (?, ?)")
             .bind(&id).bind(&company_id)
-            .execute(&*pool).await.map_err(|e| e.to_string())?;
+            .execute(&*pool).await.map_err(db_err("link person to company"))?;
     }
-    
+
     Ok(())
 }
 
@@ -211,12 +222,12 @@ pub async fn update_person(
 pub async fn delete_person(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
     sqlx::query("DELETE FROM person_companies WHERE person_id = ?")
         .bind(&id)
-        .execute(&*pool).await.map_err(|e| e.to_string())?;
+        .execute(&*pool).await.map_err(db_err("clear person-company links"))?;
 
     sqlx::query("DELETE FROM people WHERE id = ?")
         .bind(&id)
-        .execute(&*pool).await.map_err(|e| e.to_string())?;
-    
+        .execute(&*pool).await.map_err(db_err("delete person"))?;
+
     Ok(())
 }
 
@@ -226,7 +237,7 @@ pub async fn get_person_companies(pool: State<'_, SqlitePool>, person_id: String
         .bind(&person_id)
         .fetch_all(&*pool)
         .await
-        .map_err(|e| e.to_string())?;
-    
+        .map_err(db_err("fetch person companies"))?;
+
     Ok(company_ids)
 }

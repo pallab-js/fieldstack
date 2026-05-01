@@ -2,6 +2,16 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tauri::State;
 
+/// Allowlist of valid config keys. Prevents arbitrary key injection.
+const ALLOWED_CONFIG_KEYS: &[&str] = &[
+    "theme",
+    "language",
+    "default_company_id",
+    "sidebar_collapsed",
+    "items_per_page",
+    "notification_sound",
+];
+
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct AppConfig {
     pub key: String,
@@ -14,16 +24,23 @@ pub async fn get_app_config(pool: State<'_, SqlitePool>) -> Result<Vec<AppConfig
     sqlx::query_as::<_, AppConfig>("SELECT key, value FROM app_config ORDER BY key")
         .fetch_all(&*pool)
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| {
+            eprintln!("DB error in get_app_config: {}", e);
+            "Failed to load settings".to_string()
+        })
 }
 
-/// Upserts a single key-value pair in app_config.
+/// Upserts a single key-value pair in app_config. Keys must be on the allowlist.
 #[tauri::command]
 pub async fn set_app_config(
     pool: State<'_, SqlitePool>,
     key: String,
     value: String,
 ) -> Result<(), String> {
+    if !ALLOWED_CONFIG_KEYS.contains(&key.as_str()) {
+        return Err(format!("Invalid config key '{}'. Allowed keys: {}", key, ALLOWED_CONFIG_KEYS.join(", ")));
+    }
+
     sqlx::query(
         "INSERT INTO app_config (key, value) VALUES (?, ?)
          ON CONFLICT(key) DO UPDATE SET value = excluded.value",
@@ -33,20 +50,64 @@ pub async fn set_app_config(
     .execute(&*pool)
     .await
     .map(|_| ())
-    .map_err(|e| e.to_string())
+    .map_err(|e| {
+        eprintln!("DB error in set_app_config: {}", e);
+        "Failed to save setting".to_string()
+    })
 }
 
-/// Deletes all user data (jobs, proofs, audit_log, drafts) and resets the job counter.
-/// Companies, people, and app_config are preserved.
+/// Deletes all user data (jobs, proofs, drafts) and resets the job counter.
+/// Companies, people, app_config, and the audit_log are preserved.
+/// Requires a confirmation phrase to prevent accidental or malicious invocation.
 #[tauri::command]
-pub async fn reset_job_data(pool: State<'_, SqlitePool>) -> Result<(), String> {
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+pub async fn reset_job_data(
+    pool: State<'_, SqlitePool>,
+    confirmation: String,
+) -> Result<(), String> {
+    if confirmation != "DELETE ALL JOBS" {
+        return Err("Confirmation phrase mismatch. Type exactly: DELETE ALL JOBS".to_string());
+    }
 
-    sqlx::query("DELETE FROM audit_log").execute(&mut *tx).await.map_err(|e| e.to_string())?;
-    sqlx::query("DELETE FROM proofs").execute(&mut *tx).await.map_err(|e| e.to_string())?;
-    sqlx::query("DELETE FROM job_drafts").execute(&mut *tx).await.map_err(|e| e.to_string())?;
-    sqlx::query("DELETE FROM jobs").execute(&mut *tx).await.map_err(|e| e.to_string())?;
-    sqlx::query("UPDATE job_counter SET last_val = 0").execute(&mut *tx).await.map_err(|e| e.to_string())?;
+    let mut tx = pool.begin().await.map_err(|e| {
+        eprintln!("DB error starting reset transaction: {}", e);
+        "Failed to start reset".to_string()
+    })?;
 
-    tx.commit().await.map_err(|e| e.to_string())
+    // Audit the reset BEFORE deleting anything
+    let log_id = uuid::Uuid::new_v4().to_string();
+    let now = chrono::Utc::now();
+    sqlx::query(
+        "INSERT INTO audit_log (id, job_id, event_type, description, actor, timestamp) VALUES (?, NULL, 'DATA_RESET', 'All job data was reset by user', 'User', ?)"
+    )
+    .bind(&log_id)
+    .bind(&now)
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| {
+        eprintln!("DB error logging reset action: {}", e);
+        "Failed to log reset action".to_string()
+    })?;
+
+    // Preserve audit_log — it is immutable by design
+    sqlx::query("DELETE FROM proofs").execute(&mut *tx).await.map_err(|e| {
+        eprintln!("DB error deleting proofs: {}", e);
+        "Failed to reset proofs".to_string()
+    })?;
+    sqlx::query("DELETE FROM job_drafts").execute(&mut *tx).await.map_err(|e| {
+        eprintln!("DB error deleting drafts: {}", e);
+        "Failed to reset drafts".to_string()
+    })?;
+    sqlx::query("DELETE FROM jobs").execute(&mut *tx).await.map_err(|e| {
+        eprintln!("DB error deleting jobs: {}", e);
+        "Failed to reset jobs".to_string()
+    })?;
+    sqlx::query("UPDATE job_counter SET last_val = 0").execute(&mut *tx).await.map_err(|e| {
+        eprintln!("DB error resetting counter: {}", e);
+        "Failed to reset counter".to_string()
+    })?;
+
+    tx.commit().await.map_err(|e| {
+        eprintln!("DB error committing reset: {}", e);
+        "Failed to commit reset".to_string()
+    })
 }

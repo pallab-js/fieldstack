@@ -38,34 +38,42 @@ pub struct JobsByPerson {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StatusOverTime {
-    pub month: String, // "YYYY-MM"
+    pub month: String,
     pub completed: i64,
     pub overdue: i64,
     pub created: i64,
 }
 
+fn db_err(msg: &str) -> impl Fn(sqlx::Error) -> String {
+    let msg = msg.to_string();
+    move |e| {
+        eprintln!("DB error in {}: {}", msg, e);
+        format!("Failed to {}", msg)
+    }
+}
+
 #[tauri::command]
 pub async fn get_report_summary(pool: State<'_, SqlitePool>) -> Result<ReportSummary, String> {
     let total_jobs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs")
-        .fetch_one(&*pool).await.map_err(|e| e.to_string())?;
+        .fetch_one(&*pool).await.map_err(db_err("count total jobs"))?;
 
     let completed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status = 'completed'")
-        .fetch_one(&*pool).await.map_err(|e| e.to_string())?;
+        .fetch_one(&*pool).await.map_err(db_err("count completed jobs"))?;
 
     let active: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status = 'active'")
-        .fetch_one(&*pool).await.map_err(|e| e.to_string())?;
+        .fetch_one(&*pool).await.map_err(db_err("count active jobs"))?;
 
     let overdue: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status = 'overdue'")
-        .fetch_one(&*pool).await.map_err(|e| e.to_string())?;
+        .fetch_one(&*pool).await.map_err(db_err("count overdue jobs"))?;
 
     let disputed: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status = 'disputed'")
-        .fetch_one(&*pool).await.map_err(|e| e.to_string())?;
+        .fetch_one(&*pool).await.map_err(db_err("count disputed jobs"))?;
 
     let resolved: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status = 'resolved'")
-        .fetch_one(&*pool).await.map_err(|e| e.to_string())?;
+        .fetch_one(&*pool).await.map_err(db_err("count resolved jobs"))?;
 
     let pending: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status = 'pending'")
-        .fetch_one(&*pool).await.map_err(|e| e.to_string())?;
+        .fetch_one(&*pool).await.map_err(db_err("count pending jobs"))?;
 
     let completion_rate = if total_jobs > 0 {
         (completed as f64 / total_jobs as f64) * 100.0
@@ -73,11 +81,10 @@ pub async fn get_report_summary(pool: State<'_, SqlitePool>) -> Result<ReportSum
         0.0
     };
 
-    // Average days from created_at to completion_date for completed jobs
     let avg_completion_days: f64 = sqlx::query_scalar(
         "SELECT COALESCE(AVG((julianday(completion_date) - julianday(created_at))), 0.0) FROM jobs WHERE status = 'completed' AND completion_date IS NOT NULL"
     )
-    .fetch_one(&*pool).await.map_err(|e| e.to_string())?;
+    .fetch_one(&*pool).await.map_err(db_err("calculate avg completion days"))?;
 
     Ok(ReportSummary {
         total_jobs,
@@ -111,7 +118,7 @@ pub async fn get_jobs_by_company(pool: State<'_, SqlitePool>) -> Result<Vec<Jobs
     )
     .fetch_all(&*pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(db_err("fetch company report"))?;
 
     Ok(rows.into_iter().map(|(company_id, company_name, total, completed, overdue, active)| {
         JobsByCompany { company_id, company_name, total, completed, overdue, active }
@@ -138,7 +145,7 @@ pub async fn get_jobs_by_person(pool: State<'_, SqlitePool>) -> Result<Vec<JobsB
     )
     .fetch_all(&*pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(db_err("fetch person report"))?;
 
     Ok(rows.into_iter().map(|(person_id, person_name, initials, avatar_color, total, completed, overdue)| {
         JobsByPerson { person_id, person_name, initials, avatar_color, total, completed, overdue }
@@ -147,7 +154,6 @@ pub async fn get_jobs_by_person(pool: State<'_, SqlitePool>) -> Result<Vec<JobsB
 
 #[tauri::command]
 pub async fn get_jobs_by_status_over_time(pool: State<'_, SqlitePool>) -> Result<Vec<StatusOverTime>, String> {
-    // Last 6 months of data
     let rows = sqlx::query_as::<_, (String, i64, i64, i64)>(
         r#"
         SELECT
@@ -163,7 +169,7 @@ pub async fn get_jobs_by_status_over_time(pool: State<'_, SqlitePool>) -> Result
     )
     .fetch_all(&*pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(db_err("fetch status over time report"))?;
 
     Ok(rows.into_iter().map(|(month, completed, overdue, created)| {
         StatusOverTime { month, completed, overdue, created }

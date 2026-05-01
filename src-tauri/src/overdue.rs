@@ -21,8 +21,7 @@ pub async fn start_overdue_poller(app: AppHandle, pool: SqlitePool) {
 
 async fn sync_overdue_statuses(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
     let now = Utc::now();
-    
-    // Update jobs that are 'pending' or 'active' and past deadline
+
     let result = sqlx::query(
         "UPDATE jobs SET status = 'overdue', updated_at = ? WHERE status IN ('pending', 'active') AND deadline < ?"
     )
@@ -36,5 +35,8 @@ async fn sync_overdue_statuses(pool: &SqlitePool) -> Result<u64, sqlx::Error> {
 
 #[tauri::command]
 pub async fn manual_sync_overdue(pool: tauri::State<'_, SqlitePool>) -> Result<u64, String> {
-    sync_overdue_statuses(&pool).await.map_err(|e| e.to_string())
+    sync_overdue_statuses(&pool).await.map_err(|e| {
+        eprintln!("DB error in manual_sync_overdue: {}", e);
+        "Failed to sync overdue jobs".to_string()
+    })
 }

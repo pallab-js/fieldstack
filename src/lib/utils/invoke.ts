@@ -99,6 +99,6 @@ export const api = {
   settings: {
     getConfig: () => invoke<{ key: string; value: string }[]>("get_app_config"),
     setConfig: (key: string, value: string) => invoke<void>("set_app_config", { key, value }),
-    resetJobData: () => invoke<void>("reset_job_data"),
+    resetJobData: (confirmation: string) => invoke<void>("reset_job_data", { confirmation }),
   },
 };

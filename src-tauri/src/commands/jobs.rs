@@ -18,6 +18,14 @@ pub struct Job {
     pub completion_date: Option<DateTime<Utc>>,
 }
 
+fn db_err(msg: &str) -> impl Fn(sqlx::Error) -> String {
+    let msg = msg.to_string();
+    move |e| {
+        eprintln!("DB error in {}: {}", msg, e);
+        format!("Failed to {}", msg)
+    }
+}
+
 #[tauri::command]
 pub async fn get_jobs(
     pool: State<'_, SqlitePool>,
@@ -48,7 +56,7 @@ pub async fn get_jobs(
         .fetch_all(&*pool)
         .await
     }
-    .map_err(|e| e.to_string())?;
+    .map_err(db_err("fetch jobs"))?;
 
     Ok(jobs)
 }
@@ -63,14 +71,13 @@ pub async fn create_job(
     assigned_person_id: String,
     deadline: DateTime<Utc>,
 ) -> Result<String, String> {
-    // Get next JOB-XXX ID
-    let mut transaction = pool.begin().await.map_err(|e| e.to_string())?;
-    
+    let mut transaction = pool.begin().await.map_err(db_err("start transaction"))?;
+
     let counter: i64 = sqlx::query_scalar("UPDATE job_counter SET last_val = last_val + 1 RETURNING last_val")
         .fetch_one(&mut *transaction)
         .await
-        .map_err(|e| e.to_string())?;
-    
+        .map_err(db_err("generate job ID"))?;
+
     let job_id = format!("JOB-{:03}", counter);
     let now = Utc::now();
 
@@ -88,9 +95,8 @@ pub async fn create_job(
     .bind(now)
     .execute(&mut *transaction)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(db_err("create job"))?;
 
-    // Log the creation
     let log_id = uuid::Uuid::new_v4().to_string();
     let log_desc = format!("Job created: {}", title);
     sqlx::query("INSERT INTO audit_log (id, job_id, event_type, description, actor, timestamp) VALUES (?, ?, 'CREATE', ?, 'System', ?)")
@@ -100,9 +106,9 @@ pub async fn create_job(
         .bind(&now)
         .execute(&mut *transaction)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(db_err("write audit log"))?;
 
-    transaction.commit().await.map_err(|e| e.to_string())?;
+    transaction.commit().await.map_err(db_err("commit transaction"))?;
 
     Ok(job_id)
 }
@@ -123,9 +129,8 @@ pub async fn update_job_status(
         .bind(&job_id)
         .execute(&*pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(db_err("update job status"))?;
 
-    // Log the change
     let log_id = uuid::Uuid::new_v4().to_string();
     let log_desc = format!("Status changed to: {}", status);
     sqlx::query("INSERT INTO audit_log (id, job_id, event_type, description, actor, timestamp) VALUES (?, ?, 'STATUS_CHANGE', ?, 'System', ?)")
@@ -135,7 +140,7 @@ pub async fn update_job_status(
         .bind(&now)
         .execute(&*pool)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(db_err("write audit log"))?;
 
     Ok(())
 }
@@ -149,17 +154,16 @@ pub async fn dispute_job(
     let now = Utc::now();
     sqlx::query("UPDATE jobs SET status = 'disputed', updated_at = ? WHERE id = ?")
         .bind(now).bind(&job_id)
-        .execute(&*pool).await.map_err(|e| e.to_string())?;
+        .execute(&*pool).await.map_err(db_err("dispute job"))?;
 
-    // Update dispute_reason on all proofs for this job
     sqlx::query("UPDATE proofs SET dispute_reason = ? WHERE job_id = ?")
         .bind(&reason).bind(&job_id)
-        .execute(&*pool).await.map_err(|e| e.to_string())?;
+        .execute(&*pool).await.map_err(db_err("update proof dispute reason"))?;
 
     let log_id = uuid::Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO audit_log (id, job_id, event_type, description, actor, timestamp) VALUES (?, ?, 'DISPUTE', ?, 'System', ?)")
         .bind(&log_id).bind(&job_id).bind(format!("Disputed: {}", reason)).bind(&now)
-        .execute(&*pool).await.map_err(|e| e.to_string())?;
+        .execute(&*pool).await.map_err(db_err("write audit log"))?;
 
     Ok(())
 }
@@ -172,12 +176,12 @@ pub async fn resolve_job(
     let now = Utc::now();
     sqlx::query("UPDATE jobs SET status = 'resolved', updated_at = ? WHERE id = ?")
         .bind(now).bind(&job_id)
-        .execute(&*pool).await.map_err(|e| e.to_string())?;
+        .execute(&*pool).await.map_err(db_err("resolve job"))?;
 
     let log_id = uuid::Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO audit_log (id, job_id, event_type, description, actor, timestamp) VALUES (?, ?, 'RESOLVE', 'Dispute resolved by owner', 'System', ?)")
         .bind(&log_id).bind(&job_id).bind(&now)
-        .execute(&*pool).await.map_err(|e| e.to_string())?;
+        .execute(&*pool).await.map_err(db_err("write audit log"))?;
 
     Ok(())
 }

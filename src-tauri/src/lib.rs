@@ -55,7 +55,7 @@ pub fn run() {
             commands::update_person,
             commands::delete_person,
             commands::get_person_companies,
-            commands::seed_data,
+            // NOTE: seed_data intentionally NOT exposed — runs only once during setup()
             commands::get_report_summary,
             commands::get_jobs_by_company,
             commands::get_jobs_by_person,

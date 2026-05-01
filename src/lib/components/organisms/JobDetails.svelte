@@ -73,8 +73,15 @@
     } catch (e) { uiStore.notify(e as string, "error"); }
   }
 
+  const SAFE_OPEN_EXTENSIONS = ['jpg', 'jpeg', 'png', 'gif', 'webp', 'bmp', 'pdf'];
+
   async function openProof(filePath: string) {
     try {
+      const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
+      if (!SAFE_OPEN_EXTENSIONS.includes(ext)) {
+        uiStore.notify(`Cannot open .${ext} files directly for security. Access via your file explorer.`, "warning");
+        return;
+      }
       await openPath(filePath);
     } catch (e) {
       uiStore.notify("Could not open file", "error");

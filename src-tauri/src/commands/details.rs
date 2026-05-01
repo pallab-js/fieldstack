@@ -34,37 +34,42 @@ pub struct JobDetails {
     pub audit_log: Vec<AuditLog>,
 }
 
+fn db_err(msg: &str) -> impl Fn(sqlx::Error) -> String {
+    let msg = msg.to_string();
+    move |e| {
+        eprintln!("DB error in {}: {}", msg, e);
+        format!("Failed to {}", msg)
+    }
+}
+
 #[tauri::command]
 pub async fn get_job_details(
     pool: State<'_, SqlitePool>,
     job_id: String,
 ) -> Result<JobDetails, String> {
-    // Get Job
     let job = sqlx::query_as::<_, Job>(
         "SELECT * FROM jobs WHERE id = ?"
     )
     .bind(&job_id)
     .fetch_one(&*pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(db_err("fetch job details"))?;
 
-    // Get Proofs
     let proofs = sqlx::query_as::<_, Proof>(
         "SELECT * FROM proofs WHERE job_id = ? ORDER BY submitted_at DESC"
     )
     .bind(&job_id)
     .fetch_all(&*pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(db_err("fetch proofs"))?;
 
-    // Get Audit Log
     let audit_log = sqlx::query_as::<_, AuditLog>(
         "SELECT * FROM audit_log WHERE job_id = ? ORDER BY timestamp DESC"
     )
     .bind(&job_id)
     .fetch_all(&*pool)
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(db_err("fetch audit log"))?;
 
     Ok(JobDetails {
         job,

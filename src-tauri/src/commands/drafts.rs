@@ -2,14 +2,22 @@ use sqlx::SqlitePool;
 use tauri::State;
 use chrono::Utc;
 
+fn db_err(msg: &str) -> impl Fn(sqlx::Error) -> String {
+    let msg = msg.to_string();
+    move |e| {
+        eprintln!("DB error in {}: {}", msg, e);
+        format!("Failed to {}", msg)
+    }
+}
+
 #[tauri::command]
 pub async fn get_draft(pool: State<'_, SqlitePool>, id: String) -> Result<Option<String>, String> {
     let payload: Option<String> = sqlx::query_scalar("SELECT payload FROM job_drafts WHERE id = ?")
         .bind(&id)
         .fetch_optional(&*pool)
         .await
-        .map_err(|e| e.to_string())?;
-    
+        .map_err(db_err("fetch draft"))?;
+
     Ok(payload)
 }
 
@@ -24,8 +32,8 @@ pub async fn save_draft(pool: State<'_, SqlitePool>, id: String, payload: String
         .bind(now)
         .execute(&*pool)
         .await
-        .map_err(|e| e.to_string())?;
-    
+        .map_err(db_err("save draft"))?;
+
     Ok(())
 }
 
@@ -35,7 +43,7 @@ pub async fn delete_draft(pool: State<'_, SqlitePool>, id: String) -> Result<(),
         .bind(&id)
         .execute(&*pool)
         .await
-        .map_err(|e| e.to_string())?;
-    
+        .map_err(db_err("delete draft"))?;
+
     Ok(())
 }

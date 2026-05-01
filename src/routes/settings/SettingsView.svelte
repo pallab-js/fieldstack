@@ -11,6 +11,7 @@
   let isLoading = $state(true);
   let showResetModal = $state(false);
   let isResetting = $state(false);
+  let resetConfirmation = $state('');
 
   // new-key form
   let newKey = $state('');
@@ -80,9 +81,10 @@
   async function confirmReset() {
     isResetting = true;
     try {
-      await api.settings.resetJobData();
+      await api.settings.resetJobData(resetConfirmation);
       uiStore.notify('All job data has been reset', 'success');
       showResetModal = false;
+      resetConfirmation = '';
       window.location.reload();
     } catch (e) {
       uiStore.notify(`Reset failed: ${e}`, 'error');
@@ -239,12 +241,24 @@
           <li>All saved drafts</li>
         </ul>
         <p class="text-error text-sm font-medium">This action cannot be undone.</p>
+        <div class="space-y-2 pt-2">
+          <label for="reset-confirm" class="text-xs text-slate">
+            Type <code class="text-error font-mono font-bold">DELETE ALL JOBS</code> to confirm:
+          </label>
+          <input
+            id="reset-confirm"
+            type="text"
+            bind:value={resetConfirmation}
+            placeholder="DELETE ALL JOBS"
+            class="w-full bg-canvas border border-error/30 rounded-sm px-3 py-2 text-sm text-error outline-none focus:ring-1 focus:ring-error"
+          />
+        </div>
       </div>
       <div class="p-6 border-t border-hairline flex gap-3 justify-end">
         <Button variant="outline" size="sm" onclick={() => showResetModal = false} disabled={isResetting}>
           Cancel
         </Button>
-        <Button variant="coral" size="sm" onclick={confirmReset} disabled={isResetting} class="gap-2">
+        <Button variant="coral" size="sm" onclick={confirmReset} disabled={isResetting || resetConfirmation !== 'DELETE ALL JOBS'} class="gap-2">
           {#if isResetting}Resetting...{:else}<Warning size={16} weight="fill" /> Confirm Reset{/if}
         </Button>
       </div>
