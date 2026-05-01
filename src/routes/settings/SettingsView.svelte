@@ -3,78 +3,23 @@
   import { api } from "$lib/utils/invoke";
   import { uiStore } from "$lib/stores/ui.svelte";
   import Button from "$lib/components/primitives/Button.svelte";
-  import { Gear, Database, Warning, Trash, Star, Plus } from "phosphor-svelte";
+  import { Gear, Database, Warning } from "phosphor-svelte";
 
-  type ConfigRow = { key: string; value: string; is_default: number };
-
-  let configs = $state<ConfigRow[]>([]);
   let isLoading = $state(true);
   let showResetModal = $state(false);
   let isResetting = $state(false);
   let resetConfirmation = $state('');
-
-  // new-key form
-  let newKey = $state('');
-  let newValue = $state('');
-  let isCreating = $state(false);
 
   onMount(async () => { await loadConfig(); });
 
   async function loadConfig() {
     isLoading = true;
     try {
-      configs = await api.settings.getConfig();
+      await api.settings.getConfig();
     } catch (e) {
-      uiStore.notify(`Failed to load settings: ${e}`, 'error');
+      uiStore.notify('Failed to load settings', 'error');
     } finally {
       isLoading = false;
-    }
-  }
-
-  async function saveConfig(key: string, value: string) {
-    try {
-      await api.settings.setConfig(key, value);
-      uiStore.notify('Setting saved', 'success');
-      await loadConfig();
-    } catch (e) {
-      uiStore.notify(`Failed to save: ${e}`, 'error');
-    }
-  }
-
-  async function createConfig() {
-    const k = newKey.trim();
-    const v = newValue.trim();
-    if (!k) return;
-    isCreating = true;
-    try {
-      await api.settings.setConfig(k, v);
-      uiStore.notify(`Key "${k}" created`, 'success');
-      newKey = '';
-      newValue = '';
-      await loadConfig();
-    } catch (e) {
-      uiStore.notify(`Failed to create: ${e}`, 'error');
-    } finally {
-      isCreating = false;
-    }
-  }
-
-  async function deleteConfig(key: string) {
-    try {
-      await api.settings.deleteConfig(key);
-      uiStore.notify(`Key "${key}" deleted`, 'success');
-      await loadConfig();
-    } catch (e) {
-      uiStore.notify(`Failed to delete: ${e}`, 'error');
-    }
-  }
-
-  async function toggleDefault(key: string, current: number) {
-    try {
-      await api.settings.setConfigDefault(key, current === 0);
-      await loadConfig();
-    } catch (e) {
-      uiStore.notify(`Failed to update default: ${e}`, 'error');
     }
   }
 
@@ -101,15 +46,15 @@
       System <span class="text-muted italic">Settings</span>
     </h1>
     <p class="text-slate text-lg max-w-2xl leading-relaxed">
-      Configure application preferences and manage your local database.
+      Manage your local database and application preferences.
     </p>
   </section>
 
-  <!-- Configuration Section -->
+  <!-- Database Section -->
   <section class="space-y-6">
     <div class="flex items-center gap-3 border-b border-hairline pb-4">
       <Gear size={24} class="text-muted" />
-      <h3 class="font-display text-2xl">Configuration</h3>
+      <h3 class="font-display text-2xl">Database</h3>
     </div>
 
     {#if isLoading}
@@ -119,85 +64,8 @@
         {/each}
       </div>
     {:else}
-      <!-- Existing keys -->
-      {#if configs.length === 0}
-        <div class="bg-soft-stone/30 border border-dashed border-hairline p-8 rounded-lg text-center">
-          <p class="text-slate text-sm">No configuration keys yet. Add one below.</p>
-        </div>
-      {:else}
-        <div class="space-y-3">
-          {#each configs as config (config.key)}
-            <div class="bg-canvas border border-hairline p-4 rounded-sm flex items-center gap-3">
-              <!-- Default star -->
-              <button
-                onclick={() => toggleDefault(config.key, config.is_default)}
-                title={config.is_default ? 'Revoke default' : 'Mark as default'}
-                class="shrink-0 text-muted hover:text-amber-400 transition-colors"
-              >
-                <Star size={16} weight={config.is_default ? 'fill' : 'regular'} class={config.is_default ? 'text-amber-400' : ''} />
-              </button>
-
-              <!-- Key + editable value -->
-              <div class="flex-1 min-w-0">
-                <label for="config-{config.key}" class="text-[10px] font-mono uppercase tracking-widest text-muted mb-1 block truncate">
-                  {config.key}
-                </label>
-                <input
-                  id="config-{config.key}"
-                  type="text"
-                  value={config.value}
-                  onchange={(e) => saveConfig(config.key, e.currentTarget.value)}
-                  class="w-full bg-transparent text-ink text-sm border-none outline-none focus:ring-0 p-0"
-                />
-              </div>
-
-              <!-- Delete -->
-              <button
-                onclick={() => deleteConfig(config.key)}
-                title="Delete key"
-                class="shrink-0 text-muted hover:text-error transition-colors"
-              >
-                <Trash size={16} />
-              </button>
-            </div>
-          {/each}
-        </div>
-      {/if}
-
-      <!-- Add new key form -->
-      <div class="bg-soft-stone/30 border border-dashed border-hairline p-4 rounded-lg space-y-3">
-        <p class="text-[10px] font-mono uppercase tracking-widest text-muted">New Key</p>
-        <div class="flex gap-3 items-end">
-          <div class="flex-1">
-            <label for="new-key" class="text-xs text-slate mb-1 block">Key</label>
-            <input
-              id="new-key"
-              type="text"
-              bind:value={newKey}
-              placeholder="e.g. company_name"
-              class="w-full bg-canvas border border-hairline rounded-sm px-3 py-2 text-sm text-ink outline-none focus:ring-1 focus:ring-focus-blue"
-            />
-          </div>
-          <div class="flex-1">
-            <label for="new-value" class="text-xs text-slate mb-1 block">Value</label>
-            <input
-              id="new-value"
-              type="text"
-              bind:value={newValue}
-              placeholder="e.g. Acme Corp"
-              class="w-full bg-canvas border border-hairline rounded-sm px-3 py-2 text-sm text-ink outline-none focus:ring-1 focus:ring-focus-blue"
-            />
-          </div>
-          <Button
-            variant="primary"
-            size="sm"
-            onclick={createConfig}
-            disabled={isCreating || !newKey.trim()}
-            class="gap-2 shrink-0"
-          >
-            <Plus size={14} /> Add
-          </Button>
-        </div>
+      <div class="bg-soft-stone/30 border border-dashed border-hairline p-8 rounded-lg text-center">
+        <p class="text-slate text-sm">Configuration is managed locally. Settings are persisted in the app database.</p>
       </div>
     {/if}
   </section>
@@ -213,7 +81,7 @@
       <div>
         <h4 class="text-ink font-medium mb-1">Reset Job Data</h4>
         <p class="text-slate text-sm">
-          Permanently delete all jobs, proofs, audit logs, and drafts. Companies and people will be preserved.
+          Permanently delete all jobs, proofs, and drafts. Companies, people, and audit log will be preserved.
         </p>
       </div>
       <Button variant="coral" size="sm" onclick={() => showResetModal = true} class="gap-2">
@@ -237,7 +105,6 @@
         <p class="text-slate text-sm">This action will permanently delete:</p>
         <ul class="text-slate text-sm space-y-1 list-disc list-inside">
           <li>All jobs and their proofs</li>
-          <li>Complete audit history</li>
           <li>All saved drafts</li>
         </ul>
         <p class="text-error text-sm font-medium">This action cannot be undone.</p>

@@ -27,7 +27,7 @@ const ALLOWED_STATUSES: &[&str] = &["pending", "active", "overdue", "disputed", 
 fn db_err(msg: &str) -> impl Fn(sqlx::Error) -> String {
     let msg = msg.to_string();
     move |e| {
-        eprintln!("DB error in {}: {}", msg, e);
+        tracing::error!(error = %e, operation = %msg, "Database error");
         format!("Failed to {}", msg)
     }
 }
@@ -89,7 +89,37 @@ pub async fn create_job(
         return Err(format!("Invalid priority '{}'. Allowed: {}", priority, ALLOWED_PRIORITIES.join(", ")));
     }
 
+    // Validate title is not empty
+    if title.trim().is_empty() {
+        return Err("Job title cannot be empty".to_string());
+    }
+
+    // Validate deadline is not in the past
+    if deadline < Utc::now() {
+        return Err("Deadline cannot be in the past".to_string());
+    }
+
     let mut transaction = pool.begin().await.map_err(db_err("start transaction"))?;
+
+    // Validate referential integrity: company exists
+    let company_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM companies WHERE id = ?")
+        .bind(&company_id)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(db_err("validate company"))?;
+    if company_exists == 0 {
+        return Err("Company not found".to_string());
+    }
+
+    // Validate referential integrity: assigned person exists
+    let person_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM people WHERE id = ?")
+        .bind(&assigned_person_id)
+        .fetch_one(&mut *transaction)
+        .await
+        .map_err(db_err("validate person"))?;
+    if person_exists == 0 {
+        return Err("Assigned person not found".to_string());
+    }
 
     let counter: i64 = sqlx::query_scalar("UPDATE job_counter SET last_val = last_val + 1 RETURNING last_val")
         .fetch_one(&mut *transaction)
@@ -145,12 +175,15 @@ pub async fn update_job_status(
     let now = Utc::now();
     let completion_date = if status == "completed" { Some(now) } else { None };
 
+    // Make status update and audit log atomic
+    let mut transaction = pool.begin().await.map_err(db_err("start transaction"))?;
+
     sqlx::query("UPDATE jobs SET status = ?, updated_at = ?, completion_date = ? WHERE id = ?")
         .bind(&status)
         .bind(now)
         .bind(completion_date)
         .bind(&job_id)
-        .execute(&*pool)
+        .execute(&mut *transaction)
         .await
         .map_err(db_err("update job status"))?;
 
@@ -161,9 +194,11 @@ pub async fn update_job_status(
         .bind(&job_id)
         .bind(&log_desc)
         .bind(&now)
-        .execute(&*pool)
+        .execute(&mut *transaction)
         .await
         .map_err(db_err("write audit log"))?;
+
+    transaction.commit().await.map_err(db_err("commit transaction"))?;
 
     Ok(())
 }
@@ -175,18 +210,24 @@ pub async fn dispute_job(
     reason: String,
 ) -> Result<(), String> {
     let now = Utc::now();
+
+    let mut transaction = pool.begin().await.map_err(db_err("start transaction"))?;
+
     sqlx::query("UPDATE jobs SET status = 'disputed', updated_at = ? WHERE id = ?")
         .bind(now).bind(&job_id)
-        .execute(&*pool).await.map_err(db_err("dispute job"))?;
+        .execute(&mut *transaction).await.map_err(db_err("dispute job"))?;
 
-    sqlx::query("UPDATE proofs SET dispute_reason = ? WHERE job_id = ?")
+    // Only update proofs that don't already have a dispute reason (preserve existing disputes)
+    sqlx::query("UPDATE proofs SET dispute_reason = ? WHERE job_id = ? AND (dispute_reason IS NULL OR dispute_reason = '')")
         .bind(&reason).bind(&job_id)
-        .execute(&*pool).await.map_err(db_err("update proof dispute reason"))?;
+        .execute(&mut *transaction).await.map_err(db_err("update proof dispute reason"))?;
 
     let log_id = uuid::Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO audit_log (id, job_id, event_type, description, actor, timestamp) VALUES (?, ?, 'DISPUTE', ?, 'System', ?)")
         .bind(&log_id).bind(&job_id).bind(format!("Disputed: {}", reason)).bind(&now)
-        .execute(&*pool).await.map_err(db_err("write audit log"))?;
+        .execute(&mut *transaction).await.map_err(db_err("write audit log"))?;
+
+    transaction.commit().await.map_err(db_err("commit transaction"))?;
 
     Ok(())
 }
@@ -197,14 +238,19 @@ pub async fn resolve_job(
     job_id: String,
 ) -> Result<(), String> {
     let now = Utc::now();
+
+    let mut transaction = pool.begin().await.map_err(db_err("start transaction"))?;
+
     sqlx::query("UPDATE jobs SET status = 'resolved', updated_at = ? WHERE id = ?")
         .bind(now).bind(&job_id)
-        .execute(&*pool).await.map_err(db_err("resolve job"))?;
+        .execute(&mut *transaction).await.map_err(db_err("resolve job"))?;
 
     let log_id = uuid::Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO audit_log (id, job_id, event_type, description, actor, timestamp) VALUES (?, ?, 'RESOLVE', 'Dispute resolved by owner', 'System', ?)")
         .bind(&log_id).bind(&job_id).bind(&now)
-        .execute(&*pool).await.map_err(db_err("write audit log"))?;
+        .execute(&mut *transaction).await.map_err(db_err("write audit log"))?;
+
+    transaction.commit().await.map_err(db_err("commit transaction"))?;
 
     Ok(())
 }

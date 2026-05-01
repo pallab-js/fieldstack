@@ -5,7 +5,7 @@ use chrono::Utc;
 fn db_err(msg: &str) -> impl Fn(sqlx::Error) -> String {
     let msg = msg.to_string();
     move |e| {
-        eprintln!("DB error in {}: {}", msg, e);
+        tracing::error!(error = %e, operation = %msg, "Database error");
         format!("Failed to {}", msg)
     }
 }

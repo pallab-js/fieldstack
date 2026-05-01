@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
-use tauri::State;
+use tauri::{State, Manager};
+use std::fs;
 
 /// Allowlist of valid config keys. Prevents arbitrary key injection.
 const ALLOWED_CONFIG_KEYS: &[&str] = &[
@@ -25,7 +26,7 @@ pub async fn get_app_config(pool: State<'_, SqlitePool>) -> Result<Vec<AppConfig
         .fetch_all(&*pool)
         .await
         .map_err(|e| {
-            eprintln!("DB error in get_app_config: {}", e);
+            tracing::error!(error = %e, "DB error in get_app_config");
             "Failed to load settings".to_string()
         })
 }
@@ -51,7 +52,7 @@ pub async fn set_app_config(
     .await
     .map(|_| ())
     .map_err(|e| {
-        eprintln!("DB error in set_app_config: {}", e);
+        tracing::error!(error = %e, key = %key, "DB error in set_app_config");
         "Failed to save setting".to_string()
     })
 }
@@ -59,8 +60,10 @@ pub async fn set_app_config(
 /// Deletes all user data (jobs, proofs, drafts) and resets the job counter.
 /// Companies, people, app_config, and the audit_log are preserved.
 /// Requires a confirmation phrase to prevent accidental or malicious invocation.
+/// Also cleans up proof files from disk.
 #[tauri::command]
 pub async fn reset_job_data(
+    app: tauri::AppHandle,
     pool: State<'_, SqlitePool>,
     confirmation: String,
 ) -> Result<(), String> {
@@ -69,7 +72,7 @@ pub async fn reset_job_data(
     }
 
     let mut tx = pool.begin().await.map_err(|e| {
-        eprintln!("DB error starting reset transaction: {}", e);
+        tracing::error!(error = %e, "DB error starting reset transaction");
         "Failed to start reset".to_string()
     })?;
 
@@ -84,30 +87,47 @@ pub async fn reset_job_data(
     .execute(&mut *tx)
     .await
     .map_err(|e| {
-        eprintln!("DB error logging reset action: {}", e);
-        "Failed to log reset action".to_string()
-    })?;
+            tracing::error!(error = %e, "DB error logging reset action");
+            "Failed to log reset action".to_string()
+        })?;
 
     // Preserve audit_log — it is immutable by design
     sqlx::query("DELETE FROM proofs").execute(&mut *tx).await.map_err(|e| {
-        eprintln!("DB error deleting proofs: {}", e);
+        tracing::error!(error = %e, "DB error deleting proofs during reset");
         "Failed to reset proofs".to_string()
     })?;
     sqlx::query("DELETE FROM job_drafts").execute(&mut *tx).await.map_err(|e| {
-        eprintln!("DB error deleting drafts: {}", e);
+        tracing::error!(error = %e, "DB error deleting drafts during reset");
         "Failed to reset drafts".to_string()
     })?;
     sqlx::query("DELETE FROM jobs").execute(&mut *tx).await.map_err(|e| {
-        eprintln!("DB error deleting jobs: {}", e);
+        tracing::error!(error = %e, "DB error deleting jobs during reset");
         "Failed to reset jobs".to_string()
     })?;
     sqlx::query("UPDATE job_counter SET last_val = 0").execute(&mut *tx).await.map_err(|e| {
-        eprintln!("DB error resetting counter: {}", e);
+        tracing::error!(error = %e, "DB error resetting counter");
         "Failed to reset counter".to_string()
     })?;
 
     tx.commit().await.map_err(|e| {
-        eprintln!("DB error committing reset: {}", e);
+        tracing::error!(error = %e, "DB error committing reset");
         "Failed to commit reset".to_string()
-    })
+    })?;
+
+    // Clean up proof files from disk (outside transaction — best effort)
+    if let Ok(app_dir) = app.path().app_data_dir() {
+        let proofs_dir = app_dir.join("proofs");
+        if proofs_dir.exists() {
+            // Remove all job subdirectories
+            if let Ok(entries) = fs::read_dir(&proofs_dir) {
+                for entry in entries.flatten() {
+                    if entry.path().is_dir() {
+                        let _ = fs::remove_dir_all(entry.path());
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
 }

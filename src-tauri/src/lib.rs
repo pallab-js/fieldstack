@@ -2,7 +2,7 @@ mod db;
 mod commands;
 mod overdue;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -10,6 +10,18 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
             let app_handle = app.handle().clone();
+            
+            // Initialize structured logging with file output
+            let log_path = db::init_logging(&app_handle);
+            tracing::info!(version = env!("CARGO_PKG_VERSION"), "Fieldstack starting");
+
+            // Check if previous session crashed
+            if let Some(crash_context) = db::check_previous_crash(&app_handle) {
+                tracing::warn!(%crash_context, "Previous session ended abnormally");
+            }
+
+            // Set crash marker for this session
+            db::set_crash_marker(&app_handle, "app startup");
             
             // Initialize database asynchronously
             tauri::async_runtime::spawn(async move {
@@ -19,16 +31,23 @@ pub fn run() {
 
                         // Seed initial data on first launch (no-op if already seeded)
                         if let Err(e) = commands::org::seed_data_inner(&pool).await {
-                            eprintln!("Seed data error: {}", e);
+                            tracing::error!(error = %e, "Seed data error");
                         }
                         
                         // Start the background overdue engine
                         overdue::start_overdue_poller(app_handle.clone(), pool).await;
                         
-                        println!("Database and Overdue Engine initialized successfully.");
+                        // Clear crash marker — startup succeeded
+                        db::clear_crash_marker(&app_handle);
+
+                        // Signal readiness to frontend
+                        let _ = app_handle.emit("app-ready", true);
+                        tracing::info!("Database and Overdue Engine initialized successfully");
                     }
                     Err(e) => {
-                        eprintln!("Failed to initialize database: {}", e);
+                        tracing::error!(error = %e, log_file = %log_path.display(), "Failed to initialize database");
+                        // Notify frontend of critical failure so it can show error UI
+                        let _ = app_handle.emit("db-init-error", "Failed to initialize the local database. Please restart the app and contact support if the issue persists.".to_string());
                     }
                 }
             });

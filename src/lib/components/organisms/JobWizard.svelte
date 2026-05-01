@@ -35,29 +35,48 @@
   });
 
   onMount(async () => {
-    // Load companies and people from DB
-    [companies, people] = await Promise.all([api.companies.list(), api.people.list()]);
-    if (companies.length > 0) formData.company_id = companies[0].id;
-    if (people.length > 0) formData.assigned_person_id = people[0].id;
+    try {
+      [companies, people] = await Promise.all([api.companies.list(), api.people.list()]);
+      if (companies.length > 0) formData.company_id = companies[0].id;
+      if (people.length > 0) formData.assigned_person_id = people[0].id;
 
-    // Try to recover draft
-    const draft = await api.drafts.get("main-wizard");
-    if (draft) {
-      try {
-        const parsed = JSON.parse(draft);
-        formData = { ...formData, ...parsed.data };
-        step = parsed.step || 1;
-      } catch (e) {
-        console.error("Failed to parse draft", e);
+      // Try to recover draft
+      const draft = await api.drafts.get("main-wizard");
+      if (draft) {
+        try {
+          const parsed = JSON.parse(draft);
+          formData = { ...formData, ...parsed.data };
+          step = parsed.step || 1;
+        } catch {
+          // Corrupt draft, ignore
+        }
       }
+    } catch {
+      uiStore.notify("Failed to load wizard data", "error");
+    } finally {
+      initialLoadDone = true;
     }
   });
 
-  // Auto-save draft on changes
+  let hasUserInteracted = $state(false);
+  let initialLoadDone = $state(false);
+  let saveTimeout: ReturnType<typeof setTimeout> | null = null;
+
+  // Auto-save draft on changes with debounce (500ms)
   $effect(() => {
+    if (!initialLoadDone || !hasUserInteracted) return;
+
     const payload = JSON.stringify({ step, data: $state.snapshot(formData) });
-    api.drafts.save("main-wizard", payload);
+
+    if (saveTimeout) clearTimeout(saveTimeout);
+    saveTimeout = setTimeout(() => {
+      api.drafts.save("main-wizard", payload).catch(() => {});
+    }, 500);
   });
+
+  function markInteracted() {
+    hasUserInteracted = true;
+  }
 
   async function handleCreate() {
     isSaving = true;
@@ -120,7 +139,7 @@
           <div class="space-y-4">
             <label class="block">
               <span class="text-[10px] font-mono uppercase tracking-widest text-muted block mb-2">Company</span>
-              <select bind:value={formData.company_id} class="w-full bg-canvas border border-hairline rounded-sm px-4 py-3 focus:border-form-focus outline-none transition-colors">
+              <select bind:value={formData.company_id} onchange={markInteracted} class="w-full bg-canvas border border-hairline rounded-sm px-4 py-3 focus:border-form-focus outline-none transition-colors">
                 {#each companies as c}
                   <option value={c.id}>{c.name}</option>
                 {/each}
@@ -128,7 +147,7 @@
             </label>
             <label class="block">
               <span class="text-[10px] font-mono uppercase tracking-widest text-muted block mb-2">Assignee</span>
-              <select bind:value={formData.assigned_person_id} class="w-full bg-canvas border border-hairline rounded-sm px-4 py-3 focus:border-form-focus outline-none transition-colors">
+              <select bind:value={formData.assigned_person_id} onchange={markInteracted} class="w-full bg-canvas border border-hairline rounded-sm px-4 py-3 focus:border-form-focus outline-none transition-colors">
                 {#each people as p}
                   <option value={p.id}>{p.name}</option>
                 {/each}
@@ -145,6 +164,7 @@
               <input 
                 type="text" 
                 bind:value={formData.title} 
+                oninput={markInteracted}
                 placeholder="e.g. Site Audit - Block B"
                 class="w-full bg-canvas border border-hairline rounded-sm px-4 py-3 focus:border-form-focus outline-none transition-colors"
               />
@@ -153,6 +173,7 @@
               <span class="text-[10px] font-mono uppercase tracking-widest text-muted block mb-2">Description</span>
               <textarea 
                 bind:value={formData.description} 
+                oninput={markInteracted}
                 rows="4"
                 placeholder="Details of the work required..."
                 class="w-full bg-canvas border border-hairline rounded-sm px-4 py-3 focus:border-form-focus outline-none transition-colors resize-none"
@@ -166,7 +187,7 @@
           <div class="grid grid-cols-2 gap-4">
             {#each ['low', 'medium', 'high', 'critical'] as p}
               <button 
-                onclick={() => formData.priority = p as any}
+                onclick={() => { markInteracted(); formData.priority = p as any; }}
                 class={cn(
                   "p-6 border text-left rounded-sm transition-all",
                   formData.priority === p 
@@ -193,6 +214,7 @@
               <input 
                 type="date" 
                 bind:value={formData.deadline} 
+                oninput={markInteracted}
                 class="w-full bg-canvas border border-hairline rounded-sm px-4 py-3 focus:border-form-focus outline-none transition-colors"
               />
             </label>
@@ -245,7 +267,7 @@
         {#if step < 5}
           <Button 
             variant="primary" 
-            onclick={() => step++}
+            onclick={() => { markInteracted(); step++; }}
             disabled={step === 2 && !formData.title}
           >
             Continue <ArrowRight size={16} class="ml-2" />
@@ -254,7 +276,7 @@
           <Button 
             variant="coral" 
             onclick={handleCreate}
-            disabled={isSaving}
+            disabled={isSaving || !formData.title || !formData.company_id || !formData.assigned_person_id}
           >
             {isSaving ? 'Creating...' : 'Create Job'}
           </Button>

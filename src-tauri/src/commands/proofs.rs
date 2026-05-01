@@ -43,9 +43,9 @@ pub async fn save_proof_file(
     }
 
     // Reject path traversal: source must be a regular file, not a symlink to sensitive system files
-    let metadata = source.symlink_metadata().map_err(|e| e.to_string())?;
+    let metadata = source.symlink_metadata().map_err(|_| "Cannot read file metadata".to_string())?;
     if metadata.is_symlink() {
-        let canonical = source.canonicalize().map_err(|e| e.to_string())?;
+        let canonical = source.canonicalize().map_err(|_| "Cannot resolve file path".to_string())?;
         // Block access to sensitive system directories via symlinks
         let canonical_str = canonical.to_string_lossy().to_lowercase();
         if canonical_str.contains("/etc/") || canonical_str.contains("/proc/") || canonical_str.contains("/sys/") {
@@ -75,8 +75,8 @@ pub async fn save_proof_file(
         .fetch_one(&*pool)
         .await
         .map_err(|e| {
-            eprintln!("DB error validating submitted_by: {}", e);
-            "Failed to validate submitted_by".to_string()
+            tracing::error!(error = %e, "DB error validating submitted_by");
+            "Failed to validate submitter".to_string()
         })?;
 
     if person_exists == 0 {
@@ -88,54 +88,64 @@ pub async fn save_proof_file(
 
     let proofs_dir = get_proofs_path(&app, &job_id);
     if !proofs_dir.exists() {
-        fs::create_dir_all(&proofs_dir).map_err(|e| e.to_string())?;
+        fs::create_dir_all(&proofs_dir).map_err(|_| "Failed to create proof directory".to_string())?;
     }
 
     let dest_path = proofs_dir.join(&filename);
 
     // Final defense: ensure dest_path is inside proofs_dir (prevents any dest-side traversal)
-    let canonical_dest = dest_path.canonicalize().unwrap_or_else(|_| dest_path.clone());
+    // Use parent directory for canonicalize check since dest doesn't exist yet
     let canonical_proofs = proofs_dir.canonicalize().unwrap_or_else(|_| proofs_dir.clone());
-    if !canonical_dest.starts_with(&canonical_proofs) {
+    if !dest_path.starts_with(&canonical_proofs) {
         return Err("Invalid file destination".to_string());
     }
 
-    fs::copy(source, &dest_path).map_err(|e| e.to_string())?;
+    fs::copy(source, &dest_path).map_err(|_| "Failed to copy file".to_string())?;
 
     let now = Utc::now();
     let dest_path_str = dest_path.to_str().ok_or("Failed to convert path to string")?.to_string();
 
-    sqlx::query(
-        "INSERT INTO proofs (id, job_id, file_path, file_type, submitted_by, submitted_at, is_locked) VALUES (?, ?, ?, ?, ?, ?, 1)"
-    )
-    .bind(&file_id)
-    .bind(&job_id)
-    .bind(&dest_path_str)
-    .bind(&proof_type)
-    .bind(&submitted_by)
-    .bind(now)
-    .execute(&*pool)
-    .await
-    .map_err(|e| {
-        eprintln!("DB error in save_proof_file: {}", e);
-        "Failed to save proof record".to_string()
-    })?;
-
-    // Log the addition
-    let log_id = Uuid::new_v4().to_string();
-    let log_desc = format!("Proof added ({}): {}", proof_type, file_id);
-    sqlx::query("INSERT INTO audit_log (id, job_id, event_type, description, actor, timestamp) VALUES (?, ?, 'PROOF_ADD', ?, ?, ?)")
-        .bind(&log_id)
+    // Wrap DB operations — if they fail, clean up the copied file
+    let result = (|| async {
+        sqlx::query(
+            "INSERT INTO proofs (id, job_id, file_path, file_type, submitted_by, submitted_at, is_locked) VALUES (?, ?, ?, ?, ?, ?, 1)"
+        )
+        .bind(&file_id)
         .bind(&job_id)
-        .bind(&log_desc)
+        .bind(&dest_path_str)
+        .bind(&proof_type)
         .bind(&submitted_by)
-        .bind(&now)
+        .bind(now)
         .execute(&*pool)
         .await
         .map_err(|e| {
-            eprintln!("DB error in proof audit log: {}", e);
-            "Failed to write audit log".to_string()
+            tracing::error!(error = %e, "DB error in save_proof_file");
+            "Failed to save proof record".to_string()
         })?;
 
-    Ok(file_id)
+        // Log the addition
+        let log_id = Uuid::new_v4().to_string();
+        let log_desc = format!("Proof added ({}): {}", proof_type, file_id);
+        sqlx::query("INSERT INTO audit_log (id, job_id, event_type, description, actor, timestamp) VALUES (?, ?, 'PROOF_ADD', ?, ?, ?)")
+            .bind(&log_id)
+            .bind(&job_id)
+            .bind(&log_desc)
+            .bind(&submitted_by)
+            .bind(&now)
+            .execute(&*pool)
+            .await
+            .map_err(|e| {
+                tracing::error!(error = %e, "DB error in proof audit log");
+                "Failed to write audit log".to_string()
+            })?;
+
+        Ok(file_id)
+    })().await;
+
+    // If DB operations failed, clean up the file
+    if result.is_err() {
+        let _ = fs::remove_file(&dest_path);
+    }
+
+    result
 }

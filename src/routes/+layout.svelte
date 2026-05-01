@@ -6,21 +6,42 @@
 
   let { children } = $props();
 
-  // TASK 5.1: app readiness gate
+  // App readiness gate — true only when DB is initialized OR error is detected
   let appReady = $state(false);
+  let dbError = $state<string | null>(null);
+  let initTimeout = $state(false);
 
   onMount(async () => {
     // TASK 5.5: restore persisted sidebar state
     await uiStore.loadPersistedState();
 
-    // Listen for app-ready event from Rust (emitted after DB init)
+    // Listen for app-ready event from Rust (emitted after successful DB init)
     await listen("app-ready", () => {
       appReady = true;
     });
 
-    // Fallback: blocking init means pool is always ready before window opens,
-    // but set true after short delay in case event fired before listener attached
-    setTimeout(() => { appReady = true; }, 500);
+    // Listen for DB init failure
+    await listen("db-init-error", (event) => {
+      dbError = event.payload as string;
+      appReady = true;
+    });
+
+    // Fallback timeout: if neither event fires within 3s, something is wrong
+    setTimeout(() => {
+      if (!appReady && !dbError) {
+        initTimeout = true;
+        dbError = "Application initialization timed out. Please restart the app.";
+        appReady = true;
+      }
+    }, 3000);
+
+    // Global error handlers
+    window.addEventListener('unhandledrejection', (e) => {
+      console.error('Unhandled promise rejection:', e.reason);
+    });
+    window.addEventListener('error', (e) => {
+      console.error('Uncaught error:', e.error);
+    });
   });
 
   // TASK 5.4: global keyboard shortcut — Cmd+N opens new job wizard
@@ -38,6 +59,24 @@
 {#if !appReady}
   <div style="position:fixed;top:0;left:0;right:0;bottom:0;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;background:#fff;z-index:50;transform:translateZ(0);-webkit-transform:translateZ(0)">
     <p class="text-sm text-gray-500">Starting Fieldstack...</p>
+  </div>
+{:else if dbError || initTimeout}
+  <div style="position:fixed;top:0;left:0;right:0;bottom:0;width:100vw;height:100vh;display:flex;align-items:center;justify-content:center;background:#fff;z-index:50;transform:translateZ(0);-webkit-transform:translateZ(0)">
+    <div style="max-width:24rem;text-align:center;padding:2rem;">
+      <div style="width:3rem;height:3rem;border-radius:50%;background:#fee2e2;display:flex;align-items:center;justify-content:center;margin:0 auto 1rem;">
+        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#b91c1c" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
+        </svg>
+      </div>
+      <h1 style="font-size:1.25rem;font-weight:600;color:#17171c;margin-bottom:0.5rem;">Failed to Start</h1>
+      <p style="font-size:0.875rem;color:#71717a;line-height:1.5;margin-bottom:1.5rem;">{dbError}</p>
+      <button 
+        onclick={() => window.location.reload()}
+        style="background:#17171c;color:#fff;padding:0.5rem 1.5rem;border:none;border-radius:0.25rem;font-size:0.875rem;cursor:pointer;"
+      >
+        Restart App
+      </button>
+    </div>
   </div>
 {:else}
   <div class="titlebar-drag"></div>

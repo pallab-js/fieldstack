@@ -23,16 +23,16 @@
   });
 
   onMount(() => {
-    jobsStore.fetchJobs();
+    jobsStore.fetchJobs().catch(() => {});
     
     // Listen for Overdue Sync events from Rust
     // @ts-ignore
     import("@tauri-apps/api/event").then(({ listen }) => {
       listen("overdue-sync", (event) => {
         uiStore.notify(`Sync complete: ${event.payload} jobs marked overdue`, 'info');
-        jobsStore.fetchJobs();
+        jobsStore.fetchJobs().catch(() => {});
       });
-    });
+    }).catch(() => {});
   });
 
   const formattedDate = new Intl.DateTimeFormat('en-IN', {
@@ -108,7 +108,7 @@
       {:else if uiStore.activeTab === 'org'}
         <OrgView />
       {:else if uiStore.activeTab === 'jobs'}
-        <JobBoardView bind:wizardOpen />
+        <JobBoardView />
       {:else if uiStore.activeTab === 'reports'}
         <ReportsView />
       {:else if uiStore.activeTab === 'settings'}

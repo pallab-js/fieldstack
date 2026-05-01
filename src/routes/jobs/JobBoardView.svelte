@@ -1,5 +1,6 @@
 <script lang="ts">
   import { jobsStore } from "$lib/stores/jobs.svelte";
+  import { uiStore } from "$lib/stores/ui.svelte";
   import { api } from "$lib/utils/invoke";
   import Button from "$lib/components/primitives/Button.svelte";
   import Badge from "$lib/components/primitives/Badge.svelte";
@@ -25,7 +26,7 @@
       const q = searchQuery.toLowerCase();
       jobs = jobs.filter(j => 
         j.title.toLowerCase().includes(q) || 
-        j.description.toLowerCase().includes(q) ||
+        (j.description ?? "").toLowerCase().includes(q) ||
         j.id.toLowerCase().includes(q)
       );
     }
@@ -79,13 +80,21 @@
   });
 
   async function loadFilters() {
-    companies = await api.companies.list();
-    people = await api.people.list();
+    try {
+      [companies, people] = await Promise.all([api.companies.list(), api.people.list()]);
+    } catch {
+      // Filters will show raw IDs if load fails
+    }
   }
 
   async function syncOverdue() {
-    const count = await api.jobs.syncOverdue();
-    jobsStore.fetchJobs();
+    try {
+      const count = await api.jobs.syncOverdue();
+      uiStore.notify(`${count} jobs synced`, 'info');
+      jobsStore.fetchJobs();
+    } catch (e) {
+      uiStore.notify('Failed to sync overdue jobs', 'error');
+    }
   }
 
   $effect(() => {

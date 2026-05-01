@@ -79,7 +79,7 @@
     try {
       const ext = filePath.split('.').pop()?.toLowerCase() ?? '';
       if (!SAFE_OPEN_EXTENSIONS.includes(ext)) {
-        uiStore.notify(`Cannot open .${ext} files directly for security. Access via your file explorer.`, "warning");
+        uiStore.notify(`Cannot open .${ext} files directly for security. Access via your file explorer.`, "info");
         return;
       }
       await openPath(filePath);

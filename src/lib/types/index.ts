@@ -20,7 +20,7 @@ export interface Person {
 export interface Job {
   id: string; // JOB-XXX
   title: string;
-  description: string;
+  description?: string;
   status: JobStatus;
   priority: Priority;
   company_id: string;

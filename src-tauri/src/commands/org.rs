@@ -25,7 +25,7 @@ pub struct Person {
 fn db_err(msg: &str) -> impl Fn(sqlx::Error) -> String {
     let msg = msg.to_string();
     move |e| {
-        eprintln!("DB error in {}: {}", msg, e);
+        tracing::error!(error = %e, operation = %msg, "Database error");
         format!("Failed to {}", msg)
     }
 }
@@ -161,6 +161,8 @@ pub async fn create_person(
     phone: Option<String>,
     company_ids: Vec<String>,
 ) -> Result<String, String> {
+    let mut tx = pool.begin().await.map_err(db_err("start transaction"))?;
+
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
@@ -175,13 +177,15 @@ pub async fn create_person(
 
     sqlx::query("INSERT INTO people (id, name, email, phone, initials, avatar_color, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .bind(&id).bind(&name).bind(&email).bind(&phone).bind(&initials).bind(avatar_color).bind(&now)
-        .execute(&*pool).await.map_err(db_err("create person"))?;
+        .execute(&mut *tx).await.map_err(db_err("create person"))?;
 
     for company_id in company_ids {
         sqlx::query("INSERT INTO person_companies (person_id, company_id) VALUES (?, ?)")
             .bind(&id).bind(&company_id)
-            .execute(&*pool).await.map_err(db_err("link person to company"))?;
+            .execute(&mut *tx).await.map_err(db_err("link person to company"))?;
     }
+
+    tx.commit().await.map_err(db_err("commit transaction"))?;
 
     Ok(id)
 }
@@ -195,6 +199,8 @@ pub async fn update_person(
     phone: Option<String>,
     company_ids: Vec<String>,
 ) -> Result<(), String> {
+    let mut tx = pool.begin().await.map_err(db_err("start transaction"))?;
+
     let initials: String = name.split_whitespace()
         .filter_map(|w| w.chars().next())
         .take(2)
@@ -203,17 +209,19 @@ pub async fn update_person(
 
     sqlx::query("UPDATE people SET name = ?, email = ?, phone = ?, initials = ? WHERE id = ?")
         .bind(&name).bind(&email).bind(&phone).bind(&initials).bind(&id)
-        .execute(&*pool).await.map_err(db_err("update person"))?;
+        .execute(&mut *tx).await.map_err(db_err("update person"))?;
 
     sqlx::query("DELETE FROM person_companies WHERE person_id = ?")
         .bind(&id)
-        .execute(&*pool).await.map_err(db_err("clear person-company links"))?;
+        .execute(&mut *tx).await.map_err(db_err("clear person-company links"))?;
 
     for company_id in company_ids {
         sqlx::query("INSERT INTO person_companies (person_id, company_id) VALUES (?, ?)")
             .bind(&id).bind(&company_id)
-            .execute(&*pool).await.map_err(db_err("link person to company"))?;
+            .execute(&mut *tx).await.map_err(db_err("link person to company"))?;
     }
+
+    tx.commit().await.map_err(db_err("commit transaction"))?;
 
     Ok(())
 }

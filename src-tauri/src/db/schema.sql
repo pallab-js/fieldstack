@@ -13,6 +13,7 @@ CREATE TABLE IF NOT EXISTS companies (
 );
 
 -- Organization Levels (e.g., Division, Region, Team)
+-- NOTE: Currently unused. Kept for future org hierarchy support.
 CREATE TABLE IF NOT EXISTS levels (
     id TEXT PRIMARY KEY,
     company_id TEXT NOT NULL,
@@ -57,8 +58,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     completion_date DATETIME,
-    FOREIGN KEY (company_id) REFERENCES companies(id),
-    FOREIGN KEY (assigned_person_id) REFERENCES people(id)
+    FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
+    FOREIGN KEY (assigned_person_id) REFERENCES people(id) ON DELETE SET NULL
 );
 
 -- Proofs
@@ -79,7 +80,7 @@ CREATE TABLE IF NOT EXISTS proofs (
 CREATE TABLE IF NOT EXISTS audit_log (
     id TEXT PRIMARY KEY,
     job_id TEXT,
-    event_type TEXT NOT NULL, -- CREATE, STATUS_CHANGE, PROOF_ADD, DISPUTE, RESOLVE
+    event_type TEXT NOT NULL, -- CREATE, STATUS_CHANGE, PROOF_ADD, DISPUTE, RESOLVE, OVERDUE
     description TEXT NOT NULL,
     actor TEXT NOT NULL, -- name of the user
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -106,3 +107,24 @@ CREATE TABLE IF NOT EXISTS job_counter (
 
 -- Insert initial counter if not exists
 INSERT OR IGNORE INTO job_counter (last_val) VALUES (0);
+
+-- Indexes for query optimization
+CREATE INDEX IF NOT EXISTS idx_jobs_status_deadline ON jobs(status, deadline);
+CREATE INDEX IF NOT EXISTS idx_jobs_company ON jobs(company_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_person ON jobs(assigned_person_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+CREATE INDEX IF NOT EXISTS idx_proofs_job ON proofs(job_id);
+CREATE INDEX IF NOT EXISTS idx_audit_job ON audit_log(job_id);
+CREATE INDEX IF NOT EXISTS idx_proofs_submitted_by ON proofs(submitted_by);
+
+-- Schema Migration Tracking
+-- Version 1: Initial schema (companies, levels, people, jobs, proofs, audit_log, drafts, config, counter)
+-- Version 2: Added indexes, FK cascades, schema_version table
+CREATE TABLE IF NOT EXISTS schema_version (
+    version INTEGER PRIMARY KEY,
+    applied_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    description TEXT NOT NULL
+);
+
+INSERT OR IGNORE INTO schema_version (version, description) VALUES (1, 'Initial schema');
+INSERT OR IGNORE INTO schema_version (version, description) VALUES (2, 'Added indexes, FK cascades, migration tracking');
