@@ -4,10 +4,10 @@ A desktop field service management application built with **Tauri v2**, **Svelte
 
 ## Features
 
+- **Dashboard** — At-a-glance stats, overdue job banner, activity feed, and quick filters
 - **Job Board** — Create, track, and manage field service jobs with a 5-step wizard, draft auto-save, proof file attachments, dispute/resolve workflow, and overdue detection
 - **Organization** — Manage companies and contacts (people) linked to jobs
-- **Dashboard** — At-a-glance stats, overdue job banner, and quick filters
-- **Reports** — Job and org reporting views
+- **Reports** — Job and org reporting views with completion charts
 - **Settings** — App configuration
 
 ## Tech Stack
@@ -53,27 +53,36 @@ npm run tauri build
 fieldstack/
 ├── src/                        # SvelteKit frontend
 │   ├── routes/
-│   │   ├── +page.svelte        # Root / navigation shell
+│   │   ├── +page.svelte        # Root navigation shell
 │   │   ├── dashboard/
 │   │   ├── jobs/
 │   │   ├── org/
 │   │   ├── reports/
 │   │   └── settings/
 │   └── lib/
-│       ├── components/         # Shared UI components
-│       ├── stores/             # Svelte stores
-│       ├── types/              # TypeScript types
-│       └── utils/              # Tauri invoke helpers
+│       ├── components/
+│       │   ├── organisms/      # Sidebar, JobWizard, JobTable, JobDetails
+│       │   └── primitives/     # Button, Badge, StatCard, Skeleton, EmptyState
+│       ├── stores/             # Svelte stores (jobs, ui, dashboard)
+│       ├── types/              # TypeScript interfaces
+│       └── utils/              # Typed Tauri invoke helpers
 ├── src-tauri/                  # Tauri / Rust backend
 │   ├── src/
-│   │   ├── commands/           # Tauri command handlers
-│   │   ├── db/                 # SQLite database layer
+│   │   ├── commands/           # Tauri command handlers (jobs, org, proofs, drafts, reports)
+│   │   ├── db/                 # SQLite schema and init
+│   │   ├── overdue.rs          # Background overdue poller
 │   │   ├── lib.rs
 │   │   └── main.rs
 │   ├── Cargo.toml
 │   └── tauri.conf.json
 └── package.json
 ```
+
+## Database
+
+SQLite database is created automatically on first launch at the app data directory. Tables: `companies`, `people`, `person_companies`, `jobs`, `proofs`, `audit_log`, `job_drafts`, `job_counter`, `app_config`.
+
+Seed data is inserted on first run: 2 companies and 3 people.
 
 ## License
 
