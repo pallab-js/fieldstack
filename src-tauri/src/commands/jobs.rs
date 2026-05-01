@@ -18,6 +18,12 @@ pub struct Job {
     pub completion_date: Option<DateTime<Utc>>,
 }
 
+/// Allowed priority values
+const ALLOWED_PRIORITIES: &[&str] = &["low", "medium", "high", "critical"];
+
+/// Allowed status values
+const ALLOWED_STATUSES: &[&str] = &["pending", "active", "overdue", "disputed", "resolved", "completed"];
+
 fn db_err(msg: &str) -> impl Fn(sqlx::Error) -> String {
     let msg = msg.to_string();
     move |e| {
@@ -31,6 +37,13 @@ pub async fn get_jobs(
     pool: State<'_, SqlitePool>,
     status_filter: Option<String>,
 ) -> Result<Vec<Job>, String> {
+    // Validate status_filter against allowlist if provided
+    if let Some(ref status) = status_filter {
+        if !ALLOWED_STATUSES.contains(&status.as_str()) {
+            return Err(format!("Invalid status filter '{}'. Allowed: {}", status, ALLOWED_STATUSES.join(", ")));
+        }
+    }
+
     let jobs = if let Some(ref status) = status_filter {
         sqlx::query_as::<_, Job>(
             r#"
@@ -71,6 +84,11 @@ pub async fn create_job(
     assigned_person_id: String,
     deadline: DateTime<Utc>,
 ) -> Result<String, String> {
+    // Validate priority against allowlist
+    if !ALLOWED_PRIORITIES.contains(&priority.as_str()) {
+        return Err(format!("Invalid priority '{}'. Allowed: {}", priority, ALLOWED_PRIORITIES.join(", ")));
+    }
+
     let mut transaction = pool.begin().await.map_err(db_err("start transaction"))?;
 
     let counter: i64 = sqlx::query_scalar("UPDATE job_counter SET last_val = last_val + 1 RETURNING last_val")
@@ -119,6 +137,11 @@ pub async fn update_job_status(
     job_id: String,
     status: String,
 ) -> Result<(), String> {
+    // Validate status against allowlist
+    if !ALLOWED_STATUSES.contains(&status.as_str()) {
+        return Err(format!("Invalid status '{}'. Allowed: {}", status, ALLOWED_STATUSES.join(", ")));
+    }
+
     let now = Utc::now();
     let completion_date = if status == "completed" { Some(now) } else { None };
 

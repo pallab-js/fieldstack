@@ -15,6 +15,9 @@ const ALLOWED_EXTENSIONS: &[&str] = &[
     "doc", "docx", "txt", "csv", "xls", "xlsx",
 ];
 
+/// Allowed proof type values
+const ALLOWED_PROOF_TYPES: &[&str] = &["photo", "video", "audio", "document"];
+
 /// Maximum proof file size: 50 MB
 const MAX_FILE_SIZE: u64 = 50 * 1024 * 1024;
 
@@ -28,6 +31,11 @@ pub async fn save_proof_file(
     submitted_by: String,
 ) -> Result<String, String> {
     let source = Path::new(&source_path);
+
+    // Validate proof_type against allowlist
+    if !ALLOWED_PROOF_TYPES.contains(&proof_type.as_str()) {
+        return Err(format!("Invalid proof_type '{}'. Allowed: {}", proof_type, ALLOWED_PROOF_TYPES.join(", ")));
+    }
 
     // Validate file exists
     if !source.exists() {
@@ -59,6 +67,20 @@ pub async fn save_proof_file(
     let file_size = metadata.len();
     if file_size > MAX_FILE_SIZE {
         return Err(format!("File too large ({:.1} MB). Maximum allowed: {} MB", file_size as f64 / 1024.0 / 1024.0, MAX_FILE_SIZE / 1024 / 1024));
+    }
+
+    // Validate submitted_by is a valid person
+    let person_exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM people WHERE id = ?")
+        .bind(&submitted_by)
+        .fetch_one(&*pool)
+        .await
+        .map_err(|e| {
+            eprintln!("DB error validating submitted_by: {}", e);
+            "Failed to validate submitted_by".to_string()
+        })?;
+
+    if person_exists == 0 {
+        return Err(format!("Invalid submitted_by: person '{}' not found", submitted_by));
     }
 
     let file_id = Uuid::new_v4().to_string();
