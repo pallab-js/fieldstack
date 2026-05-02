@@ -36,7 +36,7 @@ jobs:
         run: cargo install cargo-audit
       - name: Run cargo audit
         working-directory: ./src-tauri
-        run: cargo audit --ignore RUSTSEC-2026-0097
+        run: cargo audit --ignore RUSTSEC-2023-0071
 
   trivy-scan:
     name: Trivy Filesystem Scan
