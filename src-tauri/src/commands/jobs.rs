@@ -135,7 +135,7 @@ pub async fn create_job(
         return Err("Assigned person not found".to_string());
     }
 
-    let counter: i64 = sqlx::query_scalar("UPDATE job_counter SET last_val = last_val + 1 RETURNING last_val")
+    let counter: i64 = sqlx::query_scalar("UPDATE job_counter SET last_val = last_val + 1 WHERE id = 1 RETURNING last_val")
         .fetch_one(&mut *transaction)
         .await
         .map_err(db_err("generate job ID"))?;
@@ -202,7 +202,10 @@ pub async fn update_job_status(
         .bind(&job_id)
         .execute(&mut *transaction)
         .await
-        .map_err(db_err("update job status"))?;
+        .map_err(db_err("update job status"))
+        .and_then(|r| if r.rows_affected() == 0 {
+            Err(format!("Job '{}' not found", job_id))
+        } else { Ok(()) })?;
 
     let log_id = uuid::Uuid::new_v4().to_string();
     let log_desc = format!("Status changed to: {}", status);
@@ -232,7 +235,10 @@ pub async fn dispute_job(
 
     sqlx::query("UPDATE jobs SET status = 'disputed', updated_at = ? WHERE id = ?")
         .bind(now).bind(&job_id)
-        .execute(&mut *transaction).await.map_err(db_err("dispute job"))?;
+        .execute(&mut *transaction).await.map_err(db_err("dispute job"))
+        .and_then(|r| if r.rows_affected() == 0 {
+            Err(format!("Job '{}' not found", job_id))
+        } else { Ok(()) })?;
 
     // Only update proofs that don't already have a dispute reason (preserve existing disputes)
     sqlx::query("UPDATE proofs SET dispute_reason = ? WHERE job_id = ? AND (dispute_reason IS NULL OR dispute_reason = '')")
@@ -260,7 +266,10 @@ pub async fn resolve_job(
 
     sqlx::query("UPDATE jobs SET status = 'resolved', updated_at = ? WHERE id = ?")
         .bind(now).bind(&job_id)
-        .execute(&mut *transaction).await.map_err(db_err("resolve job"))?;
+        .execute(&mut *transaction).await.map_err(db_err("resolve job"))
+        .and_then(|r| if r.rows_affected() == 0 {
+            Err(format!("Job '{}' not found", job_id))
+        } else { Ok(()) })?;
 
     let log_id = uuid::Uuid::new_v4().to_string();
     sqlx::query("INSERT INTO audit_log (id, job_id, event_type, description, actor, timestamp) VALUES (?, ?, 'RESOLVE', 'Dispute resolved by owner', 'System', ?)")

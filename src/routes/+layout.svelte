@@ -1,7 +1,7 @@
 <script lang="ts">
   import "../app.css";
   import { listen } from "@tauri-apps/api/event";
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { uiStore } from "$lib/stores/ui.svelte";
 
   let { children } = $props();
@@ -11,23 +11,26 @@
   let dbError = $state<string | null>(null);
   let initTimeout = $state(false);
 
+  const unlisteners: (() => void)[] = [];
+  let initTimeoutId: ReturnType<typeof setTimeout> | undefined;
+
   onMount(async () => {
     // TASK 5.5: restore persisted sidebar state
     await uiStore.loadPersistedState();
 
     // Listen for app-ready event from Rust (emitted after successful DB init)
-    await listen("app-ready", () => {
+    unlisteners.push(await listen("app-ready", () => {
       appReady = true;
-    });
+    }));
 
     // Listen for DB init failure
-    await listen("db-init-error", (event) => {
+    unlisteners.push(await listen("db-init-error", (event) => {
       dbError = event.payload as string;
       appReady = true;
-    });
+    }));
 
     // Fallback timeout: if neither event fires within 3s, something is wrong
-    setTimeout(() => {
+    initTimeoutId = setTimeout(() => {
       if (!appReady && !dbError) {
         initTimeout = true;
         dbError = "Application initialization timed out. Please restart the app.";
@@ -35,14 +38,27 @@
       }
     }, 3000);
 
-    // Global error handlers
-    window.addEventListener('unhandledrejection', (e) => {
-      console.error('Unhandled promise rejection:', e.reason);
-    });
-    window.addEventListener('error', (e) => {
-      console.error('Uncaught error:', e.error);
-    });
+    // Global error handlers — route to uiStore so errors are visible to the user
+    window.addEventListener('unhandledrejection', handleUnhandledRejection);
+    window.addEventListener('error', handleUncaughtError);
   });
+
+  onDestroy(() => {
+    unlisteners.forEach(fn => fn());
+    clearTimeout(initTimeoutId);
+    window.removeEventListener('unhandledrejection', handleUnhandledRejection);
+    window.removeEventListener('error', handleUncaughtError);
+  });
+
+  function handleUnhandledRejection(e: PromiseRejectionEvent) {
+    console.error('Unhandled promise rejection:', e.reason);
+    uiStore.notify('An unexpected error occurred. Please restart if the app behaves incorrectly.', 'error');
+  }
+
+  function handleUncaughtError(e: ErrorEvent) {
+    console.error('Uncaught error:', e.error);
+    uiStore.notify('An unexpected error occurred. Please restart if the app behaves incorrectly.', 'error');
+  }
 
   // TASK 5.4: global keyboard shortcut — Cmd+N opens new job wizard
   function handleKeydown(e: KeyboardEvent) {

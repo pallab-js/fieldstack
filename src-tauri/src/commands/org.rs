@@ -22,14 +22,10 @@ pub struct Person {
     pub initials: String,
 }
 
-/// URI schemes that must never appear in logo_url
-const BLOCKED_SCHEMES: &[&str] = &[
-    "javascript:", "data:", "vbscript:", "file:", "ftp:", "ws:", "wss:",
-];
-
+/// Allowed URI scheme prefixes for logo_url (allowlist approach).
 fn is_safe_logo_url(url: &str) -> bool {
     let lower = url.to_lowercase();
-    !BLOCKED_SCHEMES.iter().any(|s| lower.starts_with(s))
+    lower.starts_with("https://") || lower.starts_with("http://") || lower.starts_with("asset://")
 }
 
 fn db_err(msg: &str) -> impl Fn(sqlx::Error) -> String {
@@ -114,6 +110,9 @@ pub async fn create_company(
     name: String,
     logo_url: Option<String>,
 ) -> Result<String, String> {
+    if name.trim().is_empty() { return Err("Company name cannot be empty".to_string()); }
+    if name.len() > 255 { return Err("Company name too long (max 255 characters)".to_string()); }
+
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
@@ -138,6 +137,9 @@ pub async fn update_company(
     name: String,
     logo_url: Option<String>,
 ) -> Result<(), String> {
+    if name.trim().is_empty() { return Err("Company name cannot be empty".to_string()); }
+    if name.len() > 255 { return Err("Company name too long (max 255 characters)".to_string()); }
+
     // Validate logo_url to prevent dangerous URI schemes
     if let Some(ref url) = logo_url {
         if !is_safe_logo_url(url) {
@@ -169,6 +171,13 @@ pub async fn create_person(
     phone: Option<String>,
     company_ids: Vec<String>,
 ) -> Result<String, String> {
+    if name.trim().is_empty() { return Err("Name cannot be empty".to_string()); }
+    if name.len() > 255 { return Err("Name too long (max 255 characters)".to_string()); }
+    if let Some(ref e) = email {
+        if !e.contains('@') { return Err("Invalid email format".to_string()); }
+        if e.len() > 255 { return Err("Email too long (max 255 characters)".to_string()); }
+    }
+
     let mut tx = pool.begin().await.map_err(db_err("start transaction"))?;
 
     let id = Uuid::new_v4().to_string();
@@ -207,6 +216,13 @@ pub async fn update_person(
     phone: Option<String>,
     company_ids: Vec<String>,
 ) -> Result<(), String> {
+    if name.trim().is_empty() { return Err("Name cannot be empty".to_string()); }
+    if name.len() > 255 { return Err("Name too long (max 255 characters)".to_string()); }
+    if let Some(ref e) = email {
+        if !e.contains('@') { return Err("Invalid email format".to_string()); }
+        if e.len() > 255 { return Err("Email too long (max 255 characters)".to_string()); }
+    }
+
     let mut tx = pool.begin().await.map_err(db_err("start transaction"))?;
 
     let initials: String = name.split_whitespace()
@@ -236,13 +252,17 @@ pub async fn update_person(
 
 #[tauri::command]
 pub async fn delete_person(pool: State<'_, SqlitePool>, id: String) -> Result<(), String> {
+    let mut tx = pool.begin().await.map_err(db_err("start transaction"))?;
+
     sqlx::query("DELETE FROM person_companies WHERE person_id = ?")
         .bind(&id)
-        .execute(&*pool).await.map_err(db_err("clear person-company links"))?;
+        .execute(&mut *tx).await.map_err(db_err("clear person-company links"))?;
 
     sqlx::query("DELETE FROM people WHERE id = ?")
         .bind(&id)
-        .execute(&*pool).await.map_err(db_err("delete person"))?;
+        .execute(&mut *tx).await.map_err(db_err("delete person"))?;
+
+    tx.commit().await.map_err(db_err("commit transaction"))?;
 
     Ok(())
 }

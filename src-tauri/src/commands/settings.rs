@@ -104,7 +104,7 @@ pub async fn reset_job_data(
         tracing::error!(error = %e, "DB error deleting jobs during reset");
         "Failed to reset jobs".to_string()
     })?;
-    sqlx::query("UPDATE job_counter SET last_val = 0").execute(&mut *tx).await.map_err(|e| {
+    sqlx::query("UPDATE job_counter SET last_val = 0 WHERE id = 1").execute(&mut *tx).await.map_err(|e| {
         tracing::error!(error = %e, "DB error resetting counter");
         "Failed to reset counter".to_string()
     })?;

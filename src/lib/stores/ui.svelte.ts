@@ -8,7 +8,7 @@ class UIStore {
   notifications = $state<{id: string, message: string, type: 'info' | 'success' | 'error'}[]>([]);
 
   notify(message: string, type: 'info' | 'success' | 'error' = 'info') {
-    const id = Math.random().toString(36).substring(7);
+    const id = crypto.randomUUID();
     this.notifications.push({ id, message, type });
 
     setTimeout(() => {

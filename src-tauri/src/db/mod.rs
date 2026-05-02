@@ -3,13 +3,14 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager};
-use tracing_appender::rolling::{RollingFileAppender, Rotation};
+use tracing_appender::rolling::Rotation;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter, Layer, Registry};
 
 /// Initialize structured logging with file output.
 /// Called at app startup before any other subsystem.
-/// Returns the path to the log file for reference.
-pub fn init_logging(app_handle: &AppHandle) -> PathBuf {
+/// Returns the log file path AND the worker guard — the guard MUST be kept alive
+/// for the entire application lifetime or log messages will be silently dropped.
+pub fn init_logging(app_handle: &AppHandle) -> (PathBuf, tracing_appender::non_blocking::WorkerGuard) {
     let log_dir = app_handle
         .path()
         .app_data_dir()
@@ -19,15 +20,17 @@ pub fn init_logging(app_handle: &AppHandle) -> PathBuf {
         let _ = fs::create_dir_all(&log_dir);
     }
 
-    // Rotating log: new file each day, keep 7 days
-    let file_appender = RollingFileAppender::new(
-        Rotation::DAILY,
-        &log_dir,
-        "fieldstack.log",
-    );
+    // Rotating log: new file each day, keep 7 days worth of files
+    let file_appender = tracing_appender::rolling::RollingFileAppender::builder()
+        .rotation(Rotation::DAILY)
+        .filename_prefix("fieldstack")
+        .filename_suffix("log")
+        .max_log_files(7)
+        .build(&log_dir)
+        .expect("Failed to build log appender");
 
     // Non-blocking writer (flushes in background)
-    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
 
     // Console layer: human-readable for development
     let console_filter = EnvFilter::try_from_default_env()
@@ -54,7 +57,7 @@ pub fn init_logging(app_handle: &AppHandle) -> PathBuf {
 
     tracing::info!(app_dir = %log_dir.display(), "Logging initialized");
 
-    log_dir.join("fieldstack.log")
+    (log_dir.join("fieldstack.log"), guard)
 }
 
 /// Write a crash marker to the log file. Called on startup to detect

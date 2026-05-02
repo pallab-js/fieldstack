@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 use sqlx::SqlitePool;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 use chrono::Utc;
 use uuid::Uuid;
 use crate::db::get_proofs_path;
@@ -114,7 +114,16 @@ pub async fn save_proof_file(
     fs::copy(source, &dest_path).map_err(|_| "Failed to copy file".to_string())?;
 
     let now = Utc::now();
-    let dest_path_str = dest_path.to_str().ok_or("Failed to convert path to string")?.to_string();
+
+    // Store a path relative to the app data directory for portability.
+    // Reconstruct the full path at read time by joining with app_data_dir().
+    let app_dir = app.path().app_data_dir().map_err(|_| "Failed to get app data dir".to_string())?;
+    let relative_path = dest_path
+        .strip_prefix(&app_dir)
+        .unwrap_or(&dest_path)
+        .to_str()
+        .ok_or("Failed to convert path to string")?
+        .to_string();
 
     // Wrap DB operations — if they fail, clean up the copied file
     let result = (|| async {
@@ -123,7 +132,7 @@ pub async fn save_proof_file(
         )
         .bind(&file_id)
         .bind(&job_id)
-        .bind(&dest_path_str)
+        .bind(&relative_path)
         .bind(&proof_type)
         .bind(&submitted_by)
         .bind(now)

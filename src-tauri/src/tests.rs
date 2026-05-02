@@ -21,14 +21,14 @@ mod tests {
             .execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO people (id, name, initials) VALUES ('p1', 'Alice', 'AL')")
             .execute(&pool).await.unwrap();
-        sqlx::query("INSERT INTO job_counter (last_val) VALUES (0) ON CONFLICT DO NOTHING")
+        sqlx::query("INSERT INTO job_counter (id, last_val) VALUES (1, 0) ON CONFLICT DO NOTHING")
             .execute(&pool).await.unwrap();
 
         let deadline = Utc::now() + chrono::Duration::days(1);
 
         // Create a job directly via SQL (command layer requires Tauri State)
         let counter: i64 = sqlx::query_scalar(
-            "UPDATE job_counter SET last_val = last_val + 1 RETURNING last_val"
+            "UPDATE job_counter SET last_val = last_val + 1 WHERE id = 1 RETURNING last_val"
         )
         .fetch_one(&pool).await.unwrap();
 

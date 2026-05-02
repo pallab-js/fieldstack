@@ -16,7 +16,9 @@ pub fn run() {
             let app_handle = app.handle().clone();
             
             // Initialize structured logging with file output
-            let log_path = db::init_logging(&app_handle);
+            let (_log_path, log_guard) = db::init_logging(&app_handle);
+            // Keep the guard alive for the entire app lifetime — dropping it stops log flushing
+            app.manage(log_guard);
             tracing::info!(version = env!("CARGO_PKG_VERSION"), "Fieldstack starting");
 
             // Check if previous session crashed
@@ -53,7 +55,7 @@ pub fn run() {
                         tracing::info!("Database and Overdue Engine initialized successfully");
                     }
                     Err(e) => {
-                        tracing::error!(error = %e, log_file = %log_path.display(), "Failed to initialize database");
+                        tracing::error!(error = %e, "Failed to initialize database");
                         let _ = app_handle.emit("db-init-error", "Failed to initialize the local database. Please restart the app and contact support if the issue persists.".to_string());
                     }
                 }

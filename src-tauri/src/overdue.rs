@@ -92,17 +92,21 @@ async fn sync_overdue_statuses(pool: &SqlitePool) -> Result<u64, String> {
 
     for job_id in &overdue_job_ids {
         let log_id = Uuid::new_v4().to_string();
-        let _ = sqlx::query(
+        if let Err(e) = sqlx::query(
             "INSERT INTO audit_log (id, job_id, event_type, description, actor, timestamp) VALUES (?, ?, 'OVERDUE', 'Job automatically marked as overdue by system', 'System', ?)"
         )
         .bind(&log_id)
         .bind(job_id)
         .bind(&now)
         .execute(&mut *tx)
-        .await;
+        .await {
+            tracing::error!(error = %e, job_id = %job_id, "Failed to write overdue audit log entry");
+        }
     }
 
-    let _ = tx.commit().await;
+    if let Err(e) = tx.commit().await {
+        tracing::error!(error = %e, "Failed to commit overdue audit log transaction");
+    }
 
     Ok(updated_count)
 }
