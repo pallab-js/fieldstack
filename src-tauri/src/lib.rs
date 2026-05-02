@@ -91,7 +91,8 @@ pub fn run() {
             overdue::manual_sync_overdue,
             commands::get_app_config,
             commands::set_app_config,
-            commands::reset_job_data
+            commands::reset_job_data,
+            commands::check_app_ready
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

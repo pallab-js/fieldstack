@@ -131,3 +131,10 @@ pub async fn reset_job_data(
 
     Ok(())
 }
+
+/// Returns true if the DB pool is already initialized (i.e. app-ready event was already emitted).
+/// Used by the frontend to handle the race where app-ready fires before the listener is registered.
+#[tauri::command]
+pub fn check_app_ready(app: tauri::AppHandle) -> bool {
+    app.try_state::<SqlitePool>().is_some()
+}

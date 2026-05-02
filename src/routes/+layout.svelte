@@ -1,6 +1,7 @@
 <script lang="ts">
   import "../app.css";
   import { listen } from "@tauri-apps/api/event";
+  import { invoke } from "@tauri-apps/api/core";
   import { onMount, onDestroy } from "svelte";
   import { uiStore } from "$lib/stores/ui.svelte";
 
@@ -18,25 +19,33 @@
     // TASK 5.5: restore persisted sidebar state
     await uiStore.loadPersistedState();
 
-    // Listen for app-ready event from Rust (emitted after successful DB init)
-    unlisteners.push(await listen("app-ready", () => {
-      appReady = true;
-    }));
-
-    // Listen for DB init failure
-    unlisteners.push(await listen("db-init-error", (event) => {
-      dbError = event.payload as string;
-      appReady = true;
-    }));
-
-    // Fallback timeout: if neither event fires within 3s, something is wrong
-    initTimeoutId = setTimeout(() => {
-      if (!appReady && !dbError) {
-        initTimeout = true;
-        dbError = "Application initialization timed out. Please restart the app.";
+    // Register event listeners first, then check if already ready (avoids the race
+    // where app-ready fires before the listener is registered on fast machines).
+    const [unlistenReady, unlistenError] = await Promise.all([
+      listen("app-ready", () => { appReady = true; }),
+      listen("db-init-error", (event) => {
+        dbError = event.payload as string;
         appReady = true;
-      }
-    }, 3000);
+      }),
+    ]);
+    unlisteners.push(unlistenReady, unlistenError);
+
+    // Check if the backend already finished init before our listeners were ready
+    const alreadyReady = await invoke<boolean>("check_app_ready").catch(() => false);
+    if (alreadyReady) {
+      appReady = true;
+    }
+
+    if (!appReady) {
+      // Fallback timeout: if neither event fires within 3s, something is wrong
+      initTimeoutId = setTimeout(() => {
+        if (!appReady && !dbError) {
+          initTimeout = true;
+          dbError = "Application initialization timed out. Please restart the app.";
+          appReady = true;
+        }
+      }, 3000);
+    }
 
     // Global error handlers — route to uiStore so errors are visible to the user
     window.addEventListener('unhandledrejection', handleUnhandledRejection);
