@@ -22,6 +22,16 @@ pub struct Person {
     pub initials: String,
 }
 
+/// URI schemes that must never appear in logo_url
+const BLOCKED_SCHEMES: &[&str] = &[
+    "javascript:", "data:", "vbscript:", "file:", "ftp:", "ws:", "wss:",
+];
+
+fn is_safe_logo_url(url: &str) -> bool {
+    let lower = url.to_lowercase();
+    !BLOCKED_SCHEMES.iter().any(|s| lower.starts_with(s))
+}
+
 fn db_err(msg: &str) -> impl Fn(sqlx::Error) -> String {
     let msg = msg.to_string();
     move |e| {
@@ -107,10 +117,9 @@ pub async fn create_company(
     let id = Uuid::new_v4().to_string();
     let now = Utc::now().to_rfc3339();
 
-    // Validate logo_url to prevent javascript: or data: URI schemes
+    // Validate logo_url to prevent dangerous URI schemes
     if let Some(ref url) = logo_url {
-        let lower = url.to_lowercase();
-        if lower.starts_with("javascript:") || lower.starts_with("data:") || lower.starts_with("vbscript:") {
+        if !is_safe_logo_url(url) {
             return Err("Invalid logo_url: unsafe URI scheme".to_string());
         }
     }
@@ -129,10 +138,9 @@ pub async fn update_company(
     name: String,
     logo_url: Option<String>,
 ) -> Result<(), String> {
-    // Validate logo_url to prevent javascript: or data: URI schemes
+    // Validate logo_url to prevent dangerous URI schemes
     if let Some(ref url) = logo_url {
-        let lower = url.to_lowercase();
-        if lower.starts_with("javascript:") || lower.starts_with("data:") || lower.starts_with("vbscript:") {
+        if !is_safe_logo_url(url) {
             return Err("Invalid logo_url: unsafe URI scheme".to_string());
         }
     }

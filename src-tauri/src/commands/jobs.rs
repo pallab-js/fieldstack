@@ -2,6 +2,8 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use tauri::State;
 use chrono::{DateTime, Utc};
+use std::sync::Arc;
+use tokio::sync::Notify;
 
 #[derive(Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Job {
@@ -32,51 +34,63 @@ fn db_err(msg: &str) -> impl Fn(sqlx::Error) -> String {
     }
 }
 
+#[derive(Debug, serde::Serialize, serde::Deserialize)]
+pub struct PaginatedJobs {
+    pub jobs: Vec<Job>,
+    pub total: i64,
+}
+
 #[tauri::command]
 pub async fn get_jobs(
     pool: State<'_, SqlitePool>,
     status_filter: Option<String>,
-) -> Result<Vec<Job>, String> {
-    // Validate status_filter against allowlist if provided
+    limit: Option<i64>,
+    offset: Option<i64>,
+) -> Result<PaginatedJobs, String> {
     if let Some(ref status) = status_filter {
         if !ALLOWED_STATUSES.contains(&status.as_str()) {
             return Err(format!("Invalid status filter '{}'. Allowed: {}", status, ALLOWED_STATUSES.join(", ")));
         }
     }
 
-    let jobs = if let Some(ref status) = status_filter {
-        sqlx::query_as::<_, Job>(
-            r#"
-            SELECT id, title, description, status, priority, company_id, assigned_person_id, 
-                   deadline, created_at, updated_at, completion_date
-            FROM jobs
-            WHERE status = ?
-            ORDER BY created_at DESC
-            "#
+    let limit = limit.unwrap_or(50).clamp(1, 200);
+    let offset = offset.unwrap_or(0).max(0);
+
+    let (jobs, total) = if let Some(ref status) = status_filter {
+        tokio::try_join!(
+            sqlx::query_as::<_, Job>(
+                "SELECT id, title, description, status, priority, company_id, assigned_person_id, \
+                 deadline, created_at, updated_at, completion_date \
+                 FROM jobs WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            )
+            .bind(status).bind(limit).bind(offset)
+            .fetch_all(&*pool),
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM jobs WHERE status = ?")
+            .bind(status)
+            .fetch_one(&*pool),
         )
-        .bind(status)
-        .fetch_all(&*pool)
-        .await
     } else {
-        sqlx::query_as::<_, Job>(
-            r#"
-            SELECT id, title, description, status, priority, company_id, assigned_person_id, 
-                   deadline, created_at, updated_at, completion_date
-            FROM jobs
-            ORDER BY created_at DESC
-            "#
+        tokio::try_join!(
+            sqlx::query_as::<_, Job>(
+                "SELECT id, title, description, status, priority, company_id, assigned_person_id, \
+                 deadline, created_at, updated_at, completion_date \
+                 FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?"
+            )
+            .bind(limit).bind(offset)
+            .fetch_all(&*pool),
+            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM jobs")
+            .fetch_one(&*pool),
         )
-        .fetch_all(&*pool)
-        .await
     }
     .map_err(db_err("fetch jobs"))?;
 
-    Ok(jobs)
+    Ok(PaginatedJobs { jobs, total })
 }
 
 #[tauri::command]
 pub async fn create_job(
     pool: State<'_, SqlitePool>,
+    notify: State<'_, Arc<Notify>>,
     title: String,
     description: Option<String>,
     priority: String,
@@ -157,6 +171,9 @@ pub async fn create_job(
         .map_err(db_err("write audit log"))?;
 
     transaction.commit().await.map_err(db_err("commit transaction"))?;
+
+    // Wake the overdue poller so it can recalculate its sleep duration
+    notify.notify_one();
 
     Ok(job_id)
 }

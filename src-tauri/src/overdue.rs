@@ -1,10 +1,12 @@
 use sqlx::SqlitePool;
 use tauri::{AppHandle, Emitter};
+use tokio::sync::Notify;
 use tokio::time::{sleep, Duration};
 use chrono::Utc;
 use uuid::Uuid;
+use std::sync::Arc;
 
-pub async fn start_overdue_poller(app: AppHandle, pool: SqlitePool) {
+pub async fn start_overdue_poller(app: AppHandle, pool: SqlitePool, notify: Arc<Notify>) {
     tokio::spawn(async move {
         loop {
             match sync_overdue_statuses(&pool).await {
@@ -16,20 +18,44 @@ pub async fn start_overdue_poller(app: AppHandle, pool: SqlitePool) {
                 }
                 Err(e) => {
                     tracing::error!(error = %e, "Error in overdue poller");
-                    // Sleep briefly on error to avoid tight loop
                     sleep(Duration::from_secs(10)).await;
                     continue;
                 }
             }
-            sleep(Duration::from_secs(60)).await;
+
+            // Compute how long to sleep: until the next job deadline or 60s, whichever is sooner.
+            let sleep_secs = next_deadline_secs(&pool).await.unwrap_or(60).clamp(1, 60);
+
+            tokio::select! {
+                _ = sleep(Duration::from_secs(sleep_secs)) => {}
+                _ = notify.notified() => {
+                    tracing::debug!("Overdue poller woken by new job");
+                }
+            }
         }
     });
+}
+
+/// Returns seconds until the nearest pending/active job deadline, or None if no such jobs exist.
+async fn next_deadline_secs(pool: &SqlitePool) -> Option<u64> {
+    let next: Option<chrono::DateTime<Utc>> = sqlx::query_scalar(
+        "SELECT MIN(deadline) FROM jobs WHERE status IN ('pending', 'active') AND deadline > ?"
+    )
+    .bind(Utc::now())
+    .fetch_one(pool)
+    .await
+    .ok()
+    .flatten();
+
+    next.map(|dt| {
+        let secs = (dt - Utc::now()).num_seconds();
+        secs.max(0) as u64
+    })
 }
 
 async fn sync_overdue_statuses(pool: &SqlitePool) -> Result<u64, String> {
     let now = Utc::now();
 
-    // First, get the IDs of jobs that will be marked overdue (for audit logging)
     let overdue_job_ids: Vec<String> = sqlx::query_scalar(
         "SELECT id FROM jobs WHERE status IN ('pending', 'active') AND deadline < ?"
     )
@@ -45,7 +71,6 @@ async fn sync_overdue_statuses(pool: &SqlitePool) -> Result<u64, String> {
         return Ok(0);
     }
 
-    // Update the statuses
     let result = sqlx::query(
         "UPDATE jobs SET status = 'overdue', updated_at = ? WHERE status IN ('pending', 'active') AND deadline < ?"
     )
@@ -60,7 +85,6 @@ async fn sync_overdue_statuses(pool: &SqlitePool) -> Result<u64, String> {
 
     let updated_count = result.rows_affected();
 
-    // Write audit log entries for each overdue job
     let mut tx = pool.begin().await.map_err(|e| {
         tracing::error!(error = %e, "DB error starting overdue audit tx");
         "Failed to start audit transaction".to_string()

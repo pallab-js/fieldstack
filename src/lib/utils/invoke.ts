@@ -39,66 +39,93 @@ export interface StatusOverTime {
   created: number;
 }
 
+export interface PaginatedJobs {
+  jobs: Job[];
+  total: number;
+}
+
+const RETRYABLE = ["database is locked", "i/o error"];
+
+async function invokeWithRetry<T>(
+  cmd: string,
+  args?: Record<string, unknown>,
+  maxRetries = 3,
+  baseDelayMs = 200,
+): Promise<T> {
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await invoke<T>(cmd, args);
+    } catch (err) {
+      const msg = String(err).toLowerCase();
+      const retryable = RETRYABLE.some((e) => msg.includes(e));
+      if (!retryable || attempt === maxRetries) throw err;
+      await new Promise((r) => setTimeout(r, baseDelayMs * 2 ** attempt));
+    }
+  }
+  // unreachable, but satisfies TypeScript
+  throw new Error("invokeWithRetry exhausted");
+}
+
 export const api = {
   jobs: {
-    list: (statusFilter?: string) =>
-      invoke<Job[]>("get_jobs", { statusFilter }),
+    list: (statusFilter?: string, limit?: number, offset?: number) =>
+      invokeWithRetry<PaginatedJobs>("get_jobs", { statusFilter, limit, offset }),
     create: (payload: {
       title: string; description?: string; priority: Priority;
       company_id: string; assigned_person_id: string; deadline: string;
-    }) => invoke<string>("create_job", payload),
+    }) => invokeWithRetry<string>("create_job", payload),
     updateStatus: (jobId: string, status: JobStatus) =>
-      invoke<void>("update_job_status", { jobId, status }),
+      invokeWithRetry<void>("update_job_status", { jobId, status }),
     dispute: (jobId: string, reason: string) =>
-      invoke<void>("dispute_job", { jobId, reason }),
+      invokeWithRetry<void>("dispute_job", { jobId, reason }),
     resolve: (jobId: string) =>
-      invoke<void>("resolve_job", { jobId }),
+      invokeWithRetry<void>("resolve_job", { jobId }),
     getDetails: (jobId: string) =>
-      invoke<{ job: Job; proofs: any[]; audit_log: any[] }>("get_job_details", { jobId }),
-    syncOverdue: () => invoke<number>("manual_sync_overdue"),
+      invokeWithRetry<{ job: Job; proofs: unknown[]; audit_log: unknown[] }>("get_job_details", { jobId }),
+    syncOverdue: () => invokeWithRetry<number>("manual_sync_overdue"),
   },
 
   companies: {
-    list: () => invoke<Company[]>("get_companies"),
+    list: () => invokeWithRetry<Company[]>("get_companies"),
     create: (name: string, logoUrl?: string) =>
-      invoke<string>("create_company", { name, logoUrl }),
+      invokeWithRetry<string>("create_company", { name, logoUrl }),
     update: (id: string, name: string, logoUrl?: string) =>
-      invoke<void>("update_company", { id, name, logoUrl }),
-    delete: (id: string) => invoke<void>("delete_company", { id }),
+      invokeWithRetry<void>("update_company", { id, name, logoUrl }),
+    delete: (id: string) => invokeWithRetry<void>("delete_company", { id }),
   },
 
   people: {
-    list: () => invoke<Person[]>("get_people"),
+    list: () => invokeWithRetry<Person[]>("get_people"),
     create: (name: string, email: string | undefined, phone: string | undefined, companyIds: string[]) =>
-      invoke<string>("create_person", { name, email, phone, companyIds }),
+      invokeWithRetry<string>("create_person", { name, email, phone, companyIds }),
     update: (id: string, name: string, email: string | undefined, phone: string | undefined, companyIds: string[]) =>
-      invoke<void>("update_person", { id, name, email, phone, companyIds }),
-    delete: (id: string) => invoke<void>("delete_person", { id }),
+      invokeWithRetry<void>("update_person", { id, name, email, phone, companyIds }),
+    delete: (id: string) => invokeWithRetry<void>("delete_person", { id }),
     getCompanies: (personId: string) =>
-      invoke<string[]>("get_person_companies", { personId }),
+      invokeWithRetry<string[]>("get_person_companies", { personId }),
   },
 
   proofs: {
     save: (payload: { jobId: string; proofType: string; sourcePath: string; submittedBy: string }) =>
-      invoke<string>("save_proof_file", payload),
+      invokeWithRetry<string>("save_proof_file", payload),
   },
 
   drafts: {
-    get: (id: string) => invoke<string | null>("get_draft", { id }),
-    save: (id: string, payload: string) => invoke<void>("save_draft", { id, payload }),
-    delete: (id: string) => invoke<void>("delete_draft", { id }),
+    get: (id: string) => invokeWithRetry<string | null>("get_draft", { id }),
+    save: (id: string, payload: string) => invokeWithRetry<void>("save_draft", { id, payload }),
+    delete: (id: string) => invokeWithRetry<void>("delete_draft", { id }),
   },
 
   reports: {
-    summary: () => invoke<ReportSummary>("get_report_summary"),
-    byCompany: () => invoke<JobsByCompany[]>("get_jobs_by_company"),
-    byPerson: () => invoke<JobsByPerson[]>("get_jobs_by_person"),
-    overTime: () => invoke<StatusOverTime[]>("get_jobs_by_status_over_time"),
+    summary: () => invokeWithRetry<ReportSummary>("get_report_summary"),
+    byCompany: () => invokeWithRetry<JobsByCompany[]>("get_jobs_by_company"),
+    byPerson: () => invokeWithRetry<JobsByPerson[]>("get_jobs_by_person"),
+    overTime: () => invokeWithRetry<StatusOverTime[]>("get_jobs_by_status_over_time"),
   },
 
   settings: {
-    getConfig: () => invoke<{ key: string; value: string }[]>("get_app_config"),
-    setConfig: (key: string, value: string) => invoke<void>("set_app_config", { key, value }),
-    resetJobData: (confirmation: string) => invoke<void>("reset_job_data", { confirmation }),
+    getConfig: () => invokeWithRetry<{ key: string; value: string }[]>("get_app_config"),
+    setConfig: (key: string, value: string) => invokeWithRetry<void>("set_app_config", { key, value }),
+    resetJobData: (confirmation: string) => invokeWithRetry<void>("reset_job_data", { confirmation }),
   },
 };

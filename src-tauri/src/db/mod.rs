@@ -132,9 +132,8 @@ pub async fn init_db(app_handle: &AppHandle) -> Result<SqlitePool, Box<dyn std::
     // 2GB mmap — safe for 8GB RAM machines
     sqlx::query("PRAGMA mmap_size = 2147483648;").execute(&pool).await?;
 
-    // Run migrations (schema.sql)
-    let schema = include_str!("schema.sql");
-    sqlx::query(schema).execute(&pool).await?;
+    // Run pending migrations from src-tauri/migrations/
+    sqlx::migrate!("./migrations").run(&pool).await?;
 
     // Create proofs directory
     let proofs_dir = app_dir.join("proofs");

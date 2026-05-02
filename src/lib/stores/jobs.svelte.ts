@@ -3,13 +3,18 @@ import type { Job, DashboardStats } from "../types";
 
 class JobsStore {
   jobs = $state<Job[]>([]);
+  total = $state(0);
+  page = $state(1);
+  pageSize = $state(50);
   isLoading = $state(false);
   error = $state<string | null>(null);
 
-  async fetchJobs() {
+  async fetchJobs(statusFilter?: string) {
     this.isLoading = true;
     try {
-      this.jobs = await api.jobs.list();
+      const result = await api.jobs.list(statusFilter, this.pageSize, (this.page - 1) * this.pageSize);
+      this.jobs = result.jobs;
+      this.total = result.total;
       this.error = null;
     } catch (e) {
       this.error = e as string;
@@ -18,14 +23,18 @@ class JobsStore {
     }
   }
 
+  setPage(n: number) {
+    this.page = n;
+    this.fetchJobs().catch(() => {});
+  }
+
   // Derived stats using Svelte 5 runes
   stats = $derived.by<DashboardStats>(() => {
     const active = this.jobs.filter(j => j.status === 'active').length;
     const overdue = this.jobs.filter(j => j.status === 'overdue').length;
     const completed = this.jobs.filter(j => j.status === 'completed').length;
     const total = this.jobs.length;
-    
-    // Unique people in active/overdue jobs
+
     const team = new Set(
       this.jobs
         .filter(j => ['active', 'overdue'].includes(j.status))

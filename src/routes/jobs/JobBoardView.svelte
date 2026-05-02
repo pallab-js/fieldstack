@@ -8,6 +8,7 @@
   import JobWizard from "$lib/components/organisms/JobWizard.svelte";
   import { MagnifyingGlass, Plus, Funnel, Calendar, User, Building, ArrowsClockwise, Briefcase } from "phosphor-svelte";
   import type { Job, JobStatus, Priority } from "$lib/types";
+  import Pagination from "$lib/components/primitives/Pagination.svelte";
 
   let searchQuery = $state("");
   let statusFilter = $state<JobStatus | "all">("all");
@@ -301,6 +302,13 @@
       </div>
     {/if}
   </section>
+
+  <Pagination
+    total={jobsStore.total}
+    page={jobsStore.page}
+    pageSize={jobsStore.pageSize}
+    onPageChange={(p) => jobsStore.setPage(p)}
+  />
 </div>
 
 {#if selectedJobId}

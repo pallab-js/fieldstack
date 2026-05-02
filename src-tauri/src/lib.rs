@@ -1,8 +1,12 @@
 mod db;
 mod commands;
 mod overdue;
+#[cfg(test)]
+mod tests;
 
+use std::sync::Arc;
 use tauri::{Emitter, Manager};
+use tokio::sync::Notify;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -22,6 +26,10 @@ pub fn run() {
 
             // Set crash marker for this session
             db::set_crash_marker(&app_handle, "app startup");
+
+            // Notify used to wake the overdue poller when a new job is created
+            let notify = Arc::new(Notify::new());
+            app.manage(notify.clone());
             
             // Initialize database asynchronously
             tauri::async_runtime::spawn(async move {
@@ -35,7 +43,7 @@ pub fn run() {
                         }
                         
                         // Start the background overdue engine
-                        overdue::start_overdue_poller(app_handle.clone(), pool).await;
+                        overdue::start_overdue_poller(app_handle.clone(), pool, notify).await;
                         
                         // Clear crash marker — startup succeeded
                         db::clear_crash_marker(&app_handle);
@@ -46,7 +54,6 @@ pub fn run() {
                     }
                     Err(e) => {
                         tracing::error!(error = %e, log_file = %log_path.display(), "Failed to initialize database");
-                        // Notify frontend of critical failure so it can show error UI
                         let _ = app_handle.emit("db-init-error", "Failed to initialize the local database. Please restart the app and contact support if the issue persists.".to_string());
                     }
                 }

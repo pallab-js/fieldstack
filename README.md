@@ -5,7 +5,7 @@ A desktop field service management application built with **Tauri v2**, **Svelte
 ## Features
 
 - **Dashboard** — At-a-glance stats, overdue job banner, activity feed, and quick filters
-- **Job Board** — Create, track, and manage field service jobs with a 5-step wizard, draft auto-save, proof file attachments, dispute/resolve workflow, and overdue detection
+- **Job Board** — Create, track, and manage field service jobs with a 5-step wizard, draft auto-save, proof file attachments, dispute/resolve workflow, overdue detection, and pagination
 - **Organization** — Manage companies and contacts (people) linked to jobs
 - **Reports** — Job and org reporting views with completion charts
 - **Settings** — App configuration
@@ -18,7 +18,7 @@ A desktop field service management application built with **Tauri v2**, **Svelte
 | Frontend | SvelteKit 2 + Svelte 5 |
 | Styling | Tailwind CSS v4 |
 | Icons | Phosphor Svelte |
-| Database | SQLite via Tauri commands |
+| Database | SQLite via `sqlx` with versioned migrations |
 | Language | TypeScript |
 
 ## Prerequisites
@@ -38,6 +38,13 @@ npm run tauri dev
 
 # Type-check the frontend
 npm run check
+
+# Lint the frontend
+npm run lint
+
+# Run tests
+npm test           # Vitest (frontend)
+cargo test         # Rust integration tests (from src-tauri/)
 ```
 
 ## Building
@@ -59,30 +66,41 @@ fieldstack/
 │   │   ├── org/
 │   │   ├── reports/
 │   │   └── settings/
-│   └── lib/
-│       ├── components/
-│       │   ├── organisms/      # Sidebar, JobWizard, JobTable, JobDetails
-│       │   └── primitives/     # Button, Badge, StatCard, Skeleton, EmptyState
-│       ├── stores/             # Svelte stores (jobs, ui, dashboard)
-│       ├── types/              # TypeScript interfaces
-│       └── utils/              # Typed Tauri invoke helpers
+│   ├── lib/
+│   │   ├── components/
+│   │   │   ├── organisms/      # Sidebar, JobWizard, JobTable, JobDetails
+│   │   │   └── primitives/     # Button, Badge, StatCard, Skeleton, EmptyState, Pagination
+│   │   ├── stores/             # Svelte stores (jobs, ui, dashboard)
+│   │   ├── types/              # TypeScript interfaces
+│   │   └── utils/              # Typed Tauri invoke helpers (with retry logic)
+│   └── tests/                  # Vitest smoke tests
 ├── src-tauri/                  # Tauri / Rust backend
+│   ├── migrations/             # Versioned SQLite migrations (sqlx)
 │   ├── src/
 │   │   ├── commands/           # Tauri command handlers (jobs, org, proofs, drafts, reports)
-│   │   ├── db/                 # SQLite schema and init
-│   │   ├── overdue.rs          # Background overdue poller
+│   │   ├── db/                 # Database init and logging
+│   │   ├── overdue.rs          # Background overdue poller (smart sleep + Notify wake-up)
+│   │   ├── tests.rs            # Rust integration smoke tests
 │   │   ├── lib.rs
 │   │   └── main.rs
 │   ├── Cargo.toml
 │   └── tauri.conf.json
+├── eslint.config.js            # ESLint 9 flat config
 └── package.json
 ```
 
 ## Database
 
-SQLite database is created automatically on first launch at the app data directory. Tables: `companies`, `people`, `person_companies`, `jobs`, `proofs`, `audit_log`, `job_drafts`, `job_counter`, `app_config`.
+SQLite database is created automatically on first launch at the app data directory. Schema is managed via versioned migrations in `src-tauri/migrations/`. Tables: `companies`, `people`, `person_companies`, `jobs`, `proofs`, `audit_log`, `job_drafts`, `job_counter`, `app_config`.
 
 Seed data is inserted on first run: 2 companies and 3 people.
+
+## Security
+
+- CSP enforces `style-src 'self'` — no `unsafe-inline`
+- Proof file uploads are validated against an OS-agnostic user-directory allowlist (blocks path traversal on macOS, Windows, and Linux)
+- Logo URLs are validated against a blocklist of dangerous URI schemes (`javascript:`, `data:`, `file:`, `ftp:`, `ws:`, `wss:`, `vbscript:`)
+- `svelte/no-at-html-tags` ESLint rule prevents `{@html}` usage on user-supplied data
 
 ## License
 

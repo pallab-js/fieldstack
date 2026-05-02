@@ -6,6 +6,21 @@ use chrono::Utc;
 use uuid::Uuid;
 use crate::db::get_proofs_path;
 
+/// Returns true if `path` is within any standard user-accessible directory.
+/// Uses the `dirs` crate for OS-agnostic home/document/download paths.
+fn is_path_in_user_dirs(path: &std::path::Path) -> bool {
+    let candidates = [
+        dirs::home_dir(),
+        dirs::document_dir(),
+        dirs::download_dir(),
+        dirs::desktop_dir(),
+        dirs::picture_dir(),
+        dirs::video_dir(),
+        dirs::audio_dir(),
+    ];
+    candidates.into_iter().flatten().any(|d| path.starts_with(d))
+}
+
 /// Allowed file extensions for proof uploads (prevents executable/script uploads)
 const ALLOWED_EXTENSIONS: &[&str] = &[
     "jpg", "jpeg", "png", "gif", "webp", "bmp",
@@ -42,15 +57,11 @@ pub async fn save_proof_file(
         return Err("Source file does not exist".to_string());
     }
 
-    // Reject path traversal: source must be a regular file, not a symlink to sensitive system files
-    let metadata = source.symlink_metadata().map_err(|_| "Cannot read file metadata".to_string())?;
-    if metadata.is_symlink() {
-        let canonical = source.canonicalize().map_err(|_| "Cannot resolve file path".to_string())?;
-        // Block access to sensitive system directories via symlinks
-        let canonical_str = canonical.to_string_lossy().to_lowercase();
-        if canonical_str.contains("/etc/") || canonical_str.contains("/proc/") || canonical_str.contains("/sys/") {
-            return Err("Access to system files is not allowed".to_string());
-        }
+    // OS-agnostic path safety: canonicalize and verify the path is within user-accessible directories.
+    // This blocks access to system files on all platforms (macOS, Windows, Linux).
+    let canonical = source.canonicalize().map_err(|_| "Cannot resolve file path".to_string())?;
+    if !is_path_in_user_dirs(&canonical) {
+        return Err("Access to system files is not allowed".to_string());
     }
 
     // Validate file extension against allowlist
@@ -64,7 +75,7 @@ pub async fn save_proof_file(
     }
 
     // Validate file size
-    let file_size = metadata.len();
+    let file_size = canonical.metadata().map_err(|_| "Cannot read file metadata".to_string())?.len();
     if file_size > MAX_FILE_SIZE {
         return Err(format!("File too large ({:.1} MB). Maximum allowed: {} MB", file_size as f64 / 1024.0 / 1024.0, MAX_FILE_SIZE / 1024 / 1024));
     }
