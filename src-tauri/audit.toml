@@ -1,0 +1,6 @@
+# Advisories ignored in CI because they are unfixable transitive dependencies.
+# sqlx-macros-core unconditionally pulls in sqlx-mysql (and thus rsa) regardless
+# of which database features are enabled — this is a known sqlx 0.8 issue.
+# Track: https://rustsec.org/advisories/RUSTSEC-2023-0071
+#
+# Usage: cargo audit --ignore RUSTSEC-2023-0071
